@@ -525,28 +525,52 @@ async function handle(req, res) {
     });
   }
 
-  // Serve main app (AIMLOCK web)
+  // Serve main app (AIMLOCK web) — hỗ trợ cả public/ và root
   if (method === "GET" && (p === "/" || p === "/app")) {
-    const appPath = path.join(__dirname, "public", "app.html");
-    if (fs.existsSync(appPath)) {
-      const html = fs.readFileSync(appPath, "utf8");
-      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-      return res.end(html);
+    const candidates = [
+      path.join(__dirname, "public", "app.html"),
+      path.join(__dirname, "app.html")
+    ];
+    for (const appPath of candidates) {
+      if (fs.existsSync(appPath)) {
+        const html = fs.readFileSync(appPath, "utf8");
+        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+        return res.end(html);
+      }
     }
   }
 
-  // Serve admin panel
+  // Serve admin panel — hỗ trợ cả public/ và root
   if (method === "GET" && p === "/admin") {
-    const html = fs.readFileSync(path.join(__dirname, "public", "admin.html"), "utf8");
-    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-    return res.end(html);
+    const candidates = [
+      path.join(__dirname, "public", "admin.html"),
+      path.join(__dirname, "admin.html")
+    ];
+    for (const adminPath of candidates) {
+      if (fs.existsSync(adminPath)) {
+        const html = fs.readFileSync(adminPath, "utf8");
+        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+        return res.end(html);
+      }
+    }
   }
 
-  // Static files from public/
+  // Static files — public/ trước, rồi root
   if (method === "GET") {
     const safe = p.replace(/\\/g, "/").split("/").filter(function(x){return x!=="..";}).join("/") || "/";
-    const filePath = path.join(__dirname, "public", safe === "/" ? "app.html" : safe);
-    if (filePath.startsWith(path.join(__dirname, "public")) && fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+    const name = safe === "/" ? "app.html" : safe.replace(/^\//, "");
+    const candidates = [
+      path.join(__dirname, "public", name),
+      path.join(__dirname, name)
+    ];
+    let filePath = null;
+    for (const c of candidates) {
+      if (c.startsWith(__dirname) && fs.existsSync(c) && fs.statSync(c).isFile()) {
+        filePath = c;
+        break;
+      }
+    }
+    if (filePath) {
       const ext = path.extname(filePath).toLowerCase();
       const types = {
         ".html": "text/html; charset=utf-8",
@@ -560,7 +584,6 @@ async function handle(req, res) {
       return res.end(fs.readFileSync(filePath));
     }
   }
-
   json(res, 404, { ok: false, error: "Not found", path: p });
 }
 
