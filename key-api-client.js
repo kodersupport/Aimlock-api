@@ -168,6 +168,7 @@
   function enterApp() {
     unlockUI();
     updateHomeKeyInfo();
+    fetchAnnounce();
   }
 
   function bindLogout() {
@@ -201,6 +202,7 @@
       saveLocal(data.session);
       if (success && !success.hidden) showSuccess(data.session);
       updateHomeKeyInfo();
+      fetchAnnounce();
     }, 15000);
   }
 
@@ -238,6 +240,39 @@
     if (elStatus) { elStatus.textContent = "Đang hoạt động"; elStatus.classList.remove("is-expired"); }
   }
 
+
+  // ===== THÔNG BÁO ADMIN =====
+  function ensureAnnounceBanner() {
+    var el = document.getElementById("almAnnounceBanner");
+    if (el) return el;
+    el = document.createElement("div");
+    el.id = "almAnnounceBanner";
+    el.style.cssText = "display:none;position:relative;z-index:15;margin:0 0 12px;padding:12px 14px;border-radius:14px;border:1px solid rgba(255,108,124,0.35);background:linear-gradient(180deg,rgba(255,59,82,0.22),rgba(255,59,82,0.08));color:#fff4f5;font-size:12.5px;line-height:1.5;font-weight:600;box-shadow:0 8px 24px rgba(0,0,0,0.25)";
+    var shell = document.querySelector(".app-shell") || document.body;
+    var header = shell.querySelector(".app-header");
+    if (header && header.parentNode) {
+      header.parentNode.insertBefore(el, header.nextSibling);
+    } else {
+      shell.insertBefore(el, shell.firstChild);
+    }
+    return el;
+  }
+
+  async function fetchAnnounce() {
+    try {
+      var r = await fetch(API_BASE + "/api/announce");
+      var data = await r.json();
+      var el = ensureAnnounceBanner();
+      if (data.ok && data.announce && data.announce.enabled && data.announce.text) {
+        el.textContent = data.announce.text;
+        el.style.display = "block";
+      } else {
+        el.style.display = "none";
+        el.textContent = "";
+      }
+    } catch (e) {}
+  }
+
   (async function init() {
     window.ALM10Key = {
       updateHome: updateHomeKeyInfo,
@@ -254,6 +289,7 @@
         unlockUI();
         updateHomeKeyInfo();
         startTick();
+        fetchAnnounce();
       } else {
         clearLocal();
         lockUI();
