@@ -28,7 +28,7 @@ const PRESETS = {
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
 function defaultDB() {
-  const init = { keys: {}, sessions: {}, history: [], firstActivate: {} };
+  const init = { keys: {}, sessions: {}, history: [], firstActivate: {}, announce: { text: "", enabled: false, updatedAt: null } };
   const seed = [
     ["NTH-31", "Vĩnh viễn", null, true],
     ["ALM10", "1 ngày", 1, false],
@@ -227,6 +227,20 @@ async function handle(req, res) {
 
   if (method === "GET" && p === "/api/health") {
     return json(res, 200, { ok: true, name: "AIMLOCK MODE 10 API", version: "1.1.0", time: new Date().toISOString() });
+
+  // PUBLIC: thông báo từ admin
+  if (method === "GET" && p === "/api/announce") {
+    if (!db.announce) db.announce = { text: "", enabled: false, updatedAt: null };
+    return json(res, 200, {
+      ok: true,
+      announce: {
+        text: db.announce.text || "",
+        enabled: !!db.announce.enabled,
+        updatedAt: db.announce.updatedAt || null
+      }
+    });
+  }
+
   }
 
   if (method === "POST" && p === "/api/activate") {
@@ -251,6 +265,7 @@ async function handle(req, res) {
     }
 
     if (!db.firstActivate) db.firstActivate = {};
+    if (!db.announce) db.announce = { text: "", enabled: false, updatedAt: null };
     const stampKey = deviceId + "|" + keyCode;
     const prev = db.sessions[deviceId];
     const prevStamp = db.firstActivate[stampKey];
@@ -328,7 +343,25 @@ async function handle(req, res) {
     return json(res, 401, { ok: false, error: "Unauthorized — cần Admin Token" });
   }
 
-  if (method === "GET" && p === "/api/admin/keys") {
+  
+  // ADMIN: cập nhật thông báo
+  if (method === "PUT" && p === "/api/admin/announce") {
+    const body = await readBody(req);
+    if (!db.announce) db.announce = { text: "", enabled: false, updatedAt: null };
+    if (typeof body.text === "string") db.announce.text = body.text.slice(0, 2000);
+    if (typeof body.enabled === "boolean") db.announce.enabled = body.enabled;
+    db.announce.updatedAt = Date.now();
+    logHistory("announce_update", { enabled: db.announce.enabled });
+    saveDB(db);
+    return json(res, 200, { ok: true, announce: db.announce });
+  }
+
+  if (method === "GET" && p === "/api/admin/announce") {
+    if (!db.announce) db.announce = { text: "", enabled: false, updatedAt: null };
+    return json(res, 200, { ok: true, announce: db.announce });
+  }
+
+if (method === "GET" && p === "/api/admin/keys") {
     const q = String(url.searchParams.get("q") || "").trim().toUpperCase();
     let list = Object.values(db.keys).map((k) => {
       const all = sessionsForKey(k.code);
