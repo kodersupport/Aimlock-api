@@ -13,6 +13,9 @@ const HOST = process.env.HOST || "0.0.0.0";
 const DATA_DIR = path.join(__dirname, "data");
 const DB_FILE = path.join(DATA_DIR, "db.json");
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "TIENHOC_ADMIN_2026";
+// JSONBin.io free — dữ liệu KHÔNG mất khi Render ngủ/restart
+const JSONBIN_BIN_ID = process.env.JSONBIN_BIN_ID || "";
+const JSONBIN_API_KEY = process.env.JSONBIN_API_KEY || "";
 
 const PRESETS = {
   day:   { label: "1 ngày",   days: 1 },
@@ -24,37 +27,107 @@ const PRESETS = {
 
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
-function loadDB() {
-  try {
-    if (!fs.existsSync(DB_FILE)) {
-      const init = { keys: {}, sessions: {}, history: [] };
-      const seed = [
-        ["NTH-31", "Vĩnh viễn", null, true],
-        ["ALM10", "1 ngày", 1, false],
-        ["ALM10.1", "1 tuần", 7, false],
-        ["ALM10.2", "1 tháng", 30, false],
-        ["ALM10.3", "1 năm", 365, false]
-      ];
-      for (const [code, label, days, permanent] of seed) {
-        init.keys[code] = {
-          code, label, days, permanent,
-          createdAt: Date.now(), maxUses: 0, usedCount: 0, active: true, note: ""
-        };
-      }
-      saveDB(init);
-      return init;
-    }
-    return JSON.parse(fs.readFileSync(DB_FILE, "utf8"));
-  } catch (e) {
-    return { keys: {}, sessions: {}, history: [] };
+function defaultDB() {
+  const init = { keys: {}, sessions: {}, history: [] };
+  const seed = [
+    ["NTH-31", "Vĩnh viễn", null, true],
+    ["ALM10", "1 ngày", 1, false],
+    ["ALM10.1", "1 tuần", 7, false],
+    ["ALM10.2", "1 tháng", 30, false],
+    ["ALM10.3", "1 năm", 365, false]
+  ];
+  for (const [code, label, days, permanent] of seed) {
+    init.keys[code] = {
+      code, label, days, permanent,
+      createdAt: Date.now(), maxUses: 0, usedCount: 0, active: true, note: ""
+    };
   }
+  return init;
 }
 
-function saveDB(db) {
-  try { fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2), "utf8"); } catch (e) {}
+function readLocal() {
+  try {
+    if (fs.existsSync(DB_FILE)) {
+      const o = JSON.parse(fs.readFileSync(DB_FILE, "utf8"));
+      if (o && typeof o === "object" && o.keys) return o;
+    }
+  } catch (e) {}
+  return null;
 }
 
-let db = loadDB();
+function writeLocal(data) {
+  try { fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), "utf8"); } catch (e) {}
+}
+
+async function readRemote() {
+  if (!JSONBIN_BIN_ID || !JSONBIN_API_KEY) return null;
+  try {
+    const r = await fetch("https://api.jsonbin.io/v3/b/" + JSONBIN_BIN_ID + "/latest", {
+      headers: { "X-Master-Key": JSONBIN_API_KEY }
+    });
+    if (!r.ok) {
+      console.log("JSONBin read status:", r.status);
+      return null;
+    }
+    const j = await r.json();
+    const rec = j.record;
+    if (rec && typeof rec === "object" && rec.keys) return rec;
+  } catch (e) {
+    console.log("JSONBin read error:", e.message);
+  }
+  return null;
+}
+
+let _saveRemoteTimer = null;
+function writeRemote(data) {
+  if (!JSONBIN_BIN_ID || !JSONBIN_API_KEY) return;
+  // debounce 800ms — tránh spam API
+  if (_saveRemoteTimer) clearTimeout(_saveRemoteTimer);
+  _saveRemoteTimer = setTimeout(async () => {
+    try {
+      const r = await fetch("https://api.jsonbin.io/v3/b/" + JSONBIN_BIN_ID, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Master-Key": JSONBIN_API_KEY
+        },
+        body: JSON.stringify(data)
+      });
+      if (!r.ok) console.log("JSONBin write status:", r.status);
+    } catch (e) {
+      console.log("JSONBin write error:", e.message);
+    }
+  }, 800);
+}
+
+function loadDBSync() {
+  const local = readLocal();
+  if (local) return local;
+  return defaultDB();
+}
+
+function saveDB(data) {
+  writeLocal(data);
+  writeRemote(data);
+}
+
+let db = loadDBSync();
+
+// Load remote khi khởi động (ghi đè local nếu remote có data thật)
+(async function bootstrapRemote() {
+  const remote = await readRemote();
+  if (remote && remote.keys && Object.keys(remote.keys).length > 0) {
+    db = remote;
+    writeLocal(db);
+    console.log("DB loaded from JSONBin — keys:", Object.keys(db.keys).length);
+  } else if (JSONBIN_BIN_ID && JSONBIN_API_KEY) {
+    // remote trống → đẩy local/default lên
+    writeRemote(db);
+    console.log("DB seeded to JSONBin");
+  } else {
+    console.log("WARN: Chưa cấu hình JSONBIN_BIN_ID / JSONBIN_API_KEY — data sẽ MẤT khi Render restart!");
+  }
+})();
 
 function json(res, status, data) {
   const body = JSON.stringify(data);
