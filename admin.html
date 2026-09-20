@@ -67,6 +67,19 @@
   <div class="stats" id="stats"></div>
 
   <div class="card">
+    <h2>Thông báo (hiện trên web user)</h2>
+    <textarea id="annText" rows="4" placeholder="Nội dung thông báo hiển thị cho người dùng..." style="width:100%;padding:12px;border-radius:10px;border:1px solid var(--line);background:rgba(255,255,255,.04);color:inherit;font:inherit;resize:vertical"></textarea>
+    <div class="form-row" style="margin-top:10px;align-items:center">
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+        <input type="checkbox" id="annEnabled" /> Bật thông báo
+      </label>
+      <button type="button" id="btnSaveAnn">Lưu thông báo</button>
+    </div>
+    <div class="msg" id="annMsg"></div>
+  </div>
+
+
+  <div class="card">
     <h2>Tạo Key mới</h2>
     <div class="form-row">
       <input id="newCode" placeholder="Mã key (trống = tự gen)" />
@@ -239,6 +252,33 @@
       refresh();
     };
 
+
+    async function loadAnnounce() {
+      try {
+        const r = await api("GET", "/api/admin/announce");
+        if (r.ok && r.announce) {
+          document.getElementById("annText").value = r.announce.text || "";
+          document.getElementById("annEnabled").checked = !!r.announce.enabled;
+        }
+      } catch (e) {}
+    }
+    document.getElementById("btnSaveAnn").onclick = async () => {
+      const msg = document.getElementById("annMsg");
+      msg.textContent = "";
+      msg.className = "msg";
+      const r = await api("PUT", "/api/admin/announce", {
+        text: document.getElementById("annText").value,
+        enabled: document.getElementById("annEnabled").checked
+      });
+      if (r.ok) {
+        msg.className = "msg ok";
+        msg.textContent = "Đã lưu thông báo";
+      } else {
+        msg.textContent = r.error || "Lỗi";
+      }
+    };
+
+    loadAnnounce();
     refresh();
   </script>
 </body>
