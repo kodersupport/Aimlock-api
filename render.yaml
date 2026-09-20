@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: aimlock-api
+    runtime: node
+    plan: free
+    buildCommand: "echo no-build"
+    startCommand: "node server.js"
+    envVars:
+      - key: PORT
+        value: 10000
+      - key: ADMIN_TOKEN
+        generateValue: true

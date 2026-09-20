@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AIMLOCK 10 — Admin Panel</title>
+  <style>
+    :root {
+      --bg: #0a0305;
+      --card: rgba(28, 10, 14, 0.92);
+      --line: rgba(255, 92, 110, 0.2);
+      --accent: #ff3b52;
+      --accent-soft: #ff9aa5;
+      --text: #fff4f5;
+      --muted: #c4a8ad;
+      --ok: #96ffd5;
+      --warn: #ffd78f;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Segoe UI", system-ui, sans-serif;
+      background: radial-gradient(ellipse at top, rgba(255,42,66,.18), transparent 50%), #050102;
+      color: var(--text);
+      padding: 20px;
+    }
+    h1 { margin: 0 0 4px; font-size: 22px; letter-spacing: .12em; }
+    .sub { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+    .toolbar {
+      display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+      margin-bottom: 18px; padding: 14px; border-radius: 16px;
+      border: 1px solid var(--line); background: var(--card);
+    }
+    input, select, button {
+      font: inherit; color: inherit; border-radius: 10px;
+      border: 1px solid var(--line); background: rgba(255,255,255,.04);
+      padding: 10px 14px; outline: none;
+    }
+    input:focus, select:focus { border-color: var(--accent); }
+    button {
+      cursor: pointer; background: linear-gradient(180deg, rgba(255,59,82,.4), rgba(148,12,31,.3));
+      border-color: rgba(255,138,151,.35); font-weight: 700; letter-spacing: .04em;
+    }
+    button:hover { filter: brightness(1.08); }
+    button.ghost { background: rgba(255,255,255,.04); }
+    button.danger { background: rgba(180,20,40,.5); }
+    .grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+    .card {
+      border: 1px solid var(--line); border-radius: 16px; background: var(--card);
+      padding: 16px; overflow: hidden;
+    }
+    .card h2 { margin: 0 0 12px; font-size: 14px; letter-spacing: .14em; color: var(--accent-soft); text-transform: uppercase; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid rgba(255,255,255,.06); vertical-align: middle; }
+    th { color: var(--muted); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
+    .badge {
+      display: inline-block; padding: 3px 8px; border-radius: 999px; font-size: 11px; font-weight: 700;
+    }
+    .badge.ok { background: rgba(32,112,68,.35); color: var(--ok); }
+    .badge.off { background: rgba(120,40,50,.4); color: #ff8b98; }
+    .stats { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 18px; }
+    .stat {
+      flex: 1; min-width: 120px; padding: 14px; border-radius: 14px;
+      border: 1px solid var(--line); background: var(--card); text-align: center;
+    }
+    .stat b { display: block; font-size: 24px; color: var(--accent-soft); }
+    .stat span { font-size: 11px; color: var(--muted); letter-spacing: .06em; }
+    .form-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+    .form-row input, .form-row select { flex: 1; min-width: 100px; }
+    .msg { margin-top: 8px; font-size: 13px; color: var(--warn); min-height: 1.2em; }
+    .msg.ok { color: var(--ok); }
+    code { background: rgba(0,0,0,.35); padding: 2px 6px; border-radius: 6px; font-size: 12px; }
+    .token-box { font-family: monospace; font-size: 12px; word-break: break-all; }
+  </style>
+</head>
+<body>
+  <h1>AIMLOCK MODE 10</h1>
+  <p class="sub">Admin Panel — Quản lý Key & Session</p>
+
+  <div class="toolbar">
+    <input id="tokenInput" type="password" placeholder="Admin Token" style="min-width:220px" />
+    <button type="button" id="btnSaveToken">Lưu Token</button>
+    <button type="button" class="ghost" id="btnRefresh">Làm mới</button>
+    <span class="token-box" id="tokenHint"></span>
+  </div>
+
+  <div class="stats" id="stats"></div>
+
+  <div class="grid">
+    <!-- Tạo key -->
+    <div class="card">
+      <h2>Tạo Key mới</h2>
+      <div class="form-row">
+        <input id="newCode" placeholder="Mã key (để trống = tự gen)" />
+        <select id="newPreset">
+          <option value="day">1 ngày</option>
+          <option value="week">1 tuần</option>
+          <option value="month" selected>1 tháng</option>
+          <option value="year">1 năm</option>
+          <option value="perm">Vĩnh viễn</option>
+          <option value="custom">Custom ngày</option>
+        </select>
+      </div>
+      <div class="form-row">
+        <input id="newDays" type="number" min="1" placeholder="Số ngày (custom)" style="display:none" />
+        <input id="newMaxUses" type="number" min="0" placeholder="Max uses (0=∞)" value="0" />
+        <input id="newNote" placeholder="Ghi chú" />
+      </div>
+      <button type="button" id="btnCreate">Tạo Key</button>
+      <div class="msg" id="createMsg"></div>
+    </div>
+
+    <!-- Keys list -->
+    <div class="card" style="grid-column: 1 / -1">
+      <h2>Danh sách Key</h2>
+      <div style="overflow-x:auto">
+        <table>
+          <thead>
+            <tr>
+              <th>Key</th>
+              <th>Loại</th>
+              <th>Uses</th>
+              <th>Status</th>
+              <th>Note</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="keysBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Sessions -->
+    <div class="card" style="grid-column: 1 / -1">
+      <h2>Session đang hoạt động</h2>
+      <div style="overflow-x:auto">
+        <table>
+          <thead>
+            <tr>
+              <th>User</th>
+              <th>Key</th>
+              <th>Device</th>
+              <th>Bắt đầu</th>
+              <th>Hết hạn</th>
+              <th>Còn lại</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="sessBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const API = location.origin;
+    const tokenInput = document.getElementById("tokenInput");
+    const createMsg = document.getElementById("createMsg");
+    const presetEl = document.getElementById("newPreset");
+    const daysEl = document.getElementById("newDays");
+
+    function getToken() {
+      return localStorage.getItem("alm10_admin_token") || tokenInput.value.trim();
+    }
+    function headers() {
+      return {
+        "Content-Type": "application/json",
+        "X-Admin-Token": getToken()
+      };
+    }
+
+    // restore token
+    tokenInput.value = localStorage.getItem("alm10_admin_token") || "";
+    document.getElementById("btnSaveToken").onclick = () => {
+      localStorage.setItem("alm10_admin_token", tokenInput.value.trim());
+      document.getElementById("tokenHint").textContent = "Đã lưu token";
+      refresh();
+    };
+
+    presetEl.onchange = () => {
+      daysEl.style.display = presetEl.value === "custom" ? "block" : "none";
+    };
+
+    async function api(method, path, body) {
+      const opt = { method, headers: headers() };
+      if (body) opt.body = JSON.stringify(body);
+      const r = await fetch(API + path, opt);
+      return r.json();
+    }
+
+    async function refresh() {
+      try {
+        const [st, keys, sess] = await Promise.all([
+          api("GET", "/api/admin/stats"),
+          api("GET", "/api/admin/keys"),
+          api("GET", "/api/admin/sessions")
+        ]);
+        if (!st.ok) {
+          document.getElementById("stats").innerHTML = `<div class="stat"><b>!</b><span>${st.error || "Lỗi token"}</span></div>`;
+          return;
+        }
+        const s = st.stats;
+        document.getElementById("stats").innerHTML = `
+          <div class="stat"><b>${s.totalKeys}</b><span>TỔNG KEY</span></div>
+          <div class="stat"><b>${s.activeKeys}</b><span>KEY ACTIVE</span></div>
+          <div class="stat"><b>${s.totalSessions}</b><span>SESSION</span></div>
+          <div class="stat"><b>${s.validSessions}</b><span>ĐANG HỢP LỆ</span></div>
+        `;
+
+        document.getElementById("keysBody").innerHTML = (keys.keys || []).map(k => `
+          <tr>
+            <td><code>${k.code}</code></td>
+            <td>${k.label}${k.permanent ? "" : " (" + k.days + "d)"}</td>
+            <td>${k.usedCount || 0}${k.maxUses ? " / " + k.maxUses : ""}</td>
+            <td><span class="badge ${k.active ? "ok" : "off"}">${k.active ? "ON" : "OFF"}</span></td>
+            <td>${k.note || "—"}</td>
+            <td>
+              <button class="ghost" onclick="toggleKey('${k.code}', ${!k.active})">${k.active ? "Tắt" : "Bật"}</button>
+              <button class="danger" onclick="delKey('${k.code}')">Xóa</button>
+            </td>
+          </tr>
+        `).join("") || "<tr><td colspan='6'>Chưa có key</td></tr>";
+
+        document.getElementById("sessBody").innerHTML = (sess.sessions || []).map(s => `
+          <tr>
+            <td><b>${s.user}</b></td>
+            <td><code>${s.key}</code></td>
+            <td>${s.device || "—"}</td>
+            <td>${s.startText}</td>
+            <td>${s.expireText}</td>
+            <td><span class="badge ${s.valid ? "ok" : "off"}">${s.remaining}</span></td>
+            <td><button class="danger" onclick="revoke('${encodeURIComponent(s.user)}')">Thu hồi</button></td>
+          </tr>
+        `).join("") || "<tr><td colspan='7'>Chưa có session</td></tr>";
+      } catch (e) {
+        document.getElementById("stats").innerHTML = `<div class="stat"><b>!</b><span>${e.message}</span></div>`;
+      }
+    }
+
+    document.getElementById("btnCreate").onclick = async () => {
+      createMsg.textContent = "";
+      createMsg.className = "msg";
+      const body = {
+        code: document.getElementById("newCode").value.trim() || undefined,
+        maxUses: Number(document.getElementById("newMaxUses").value) || 0,
+        note: document.getElementById("newNote").value.trim()
+      };
+      if (presetEl.value === "custom") {
+        body.days = Number(daysEl.value) || 1;
+        body.permanent = false;
+        body.label = body.days + " ngày";
+      } else {
+        body.preset = presetEl.value;
+      }
+      const r = await api("POST", "/api/admin/keys", body);
+      if (r.ok) {
+        createMsg.className = "msg ok";
+        createMsg.textContent = "Đã tạo: " + r.key.code;
+        document.getElementById("newCode").value = "";
+        refresh();
+      } else {
+        createMsg.textContent = r.error || "Lỗi";
+      }
+    };
+
+    window.toggleKey = async (code, active) => {
+      await api("PUT", "/api/admin/keys/" + code, { active });
+      refresh();
+    };
+    window.delKey = async (code) => {
+      if (!confirm("Xóa key " + code + "?")) return;
+      await api("DELETE", "/api/admin/keys/" + code);
+      refresh();
+    };
+    window.revoke = async (user) => {
+      if (!confirm("Thu hồi session của " + decodeURIComponent(user) + "?")) return;
+      await api("DELETE", "/api/admin/sessions/" + user);
+      refresh();
+    };
+
+    document.getElementById("btnRefresh").onclick = refresh;
+    refresh();
+  </script>
+</body>
+</html>

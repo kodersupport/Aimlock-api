@@ -1,0 +1,13 @@
+{
+  "name": "aimlock-api",
+  "version": "1.0.0",
+  "description": "AIMLOCK MODE 10 - Original Key API",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "keywords": ["aimlock", "key-api"],
+  "author": "TIEN HOC",
+  "license": "ISC"
+}
