@@ -28,7 +28,7 @@ const PRESETS = {
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
 function defaultDB() {
-  const init = { keys: {}, sessions: {}, history: [] };
+  const init = { keys: {}, sessions: {}, history: [], firstActivate: {} };
   const seed = [
     ["NTH-31", "Vĩnh viễn", null, true],
     ["ALM10", "1 ngày", 1, false],
@@ -250,29 +250,40 @@ async function handle(req, res) {
       }
     }
 
+    if (!db.firstActivate) db.firstActivate = {};
+    const stampKey = deviceId + "|" + keyCode;
     const prev = db.sessions[deviceId];
+    const prevStamp = db.firstActivate[stampKey];
+
+    // Giữ mốc kích hoạt LẦN ĐẦU — logout không reset thời gian
     let activatedAt = Date.now();
-    if (prev && normalizeKey(prev.key) === keyCode && prev.activatedAt) activatedAt = Number(prev.activatedAt);
+    if (prevStamp) {
+      activatedAt = Number(prevStamp);
+    } else if (prev && normalizeKey(prev.key) === keyCode && prev.activatedAt) {
+      activatedAt = Number(prev.activatedAt);
+    }
+
     const ms = durationMs(keyMeta);
     let expiresAt = ms == null ? null : activatedAt + ms;
 
-    if (prev && normalizeKey(prev.key) === keyCode && prev.expiresAt != null && Date.now() >= prev.expiresAt) {
+    // Đã hết hạn theo mốc lần đầu → không cho kích hoạt lại cùng key
+    if (expiresAt != null && Date.now() >= expiresAt) {
       logHistory("activate_denied_expired", { key: keyCode, deviceId });
       saveDB(db);
       return json(res, 403, { ok: false, error: "Key đã hết hạn. Vui lòng liên hệ ADMIN TIEN HOC." });
     }
-    if (prev && prev.key && normalizeKey(prev.key) !== keyCode) {
-      activatedAt = Date.now();
-      expiresAt = ms == null ? null : activatedAt + ms;
-    }
+
+    // Đổi sang key KHÁC trên cùng máy → mốc mới cho key mới (key cũ giữ stamp riêng)
+    // (stamp theo device+key nên key mới tự có mốc riêng)
 
     const session = {
       deviceId, key: keyMeta.code, device, activatedAt, expiresAt,
       lastSeen: Date.now(), label: keyMeta.label, permanent: !!keyMeta.permanent
     };
-    const isNew = !prev || normalizeKey(prev.key) !== keyCode;
+    const isNewDeviceOnKey = !prevStamp;
     db.sessions[deviceId] = session;
-    if (isNew) keyMeta.usedCount = (keyMeta.usedCount || 0) + 1;
+    db.firstActivate[stampKey] = activatedAt;
+    if (isNewDeviceOnKey) keyMeta.usedCount = (keyMeta.usedCount || 0) + 1;
     logHistory("activate", { key: keyMeta.code, deviceId, device });
     saveDB(db);
     return json(res, 200, {
@@ -305,6 +316,7 @@ async function handle(req, res) {
     const body = await readBody(req);
     const deviceId = String(body.deviceId || "").trim();
     if (deviceId && db.sessions[deviceId]) {
+      // Chỉ gỡ session online — GIỮ firstActivate để vào lại không reset thời hạn
       logHistory("logout", { deviceId, key: db.sessions[deviceId].key });
       delete db.sessions[deviceId];
       saveDB(db);
