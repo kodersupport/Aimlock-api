@@ -1,21 +1,16 @@
 /**
- * AIMLOCK MODE 10 — Key API Client
- * Thay thế hoàn toàn hệ thống key localStorage cũ.
- *
- * Cách dùng:
- * 1. Đặt <script src="https://YOUR-API-HOST/key-api-client.js"></script>
- *    HOẶC copy nội dung này vào cuối file HTML (trước </body>)
- * 2. Đặt window.ALM10_API_BASE = "https://YOUR-API-HOST"; trước khi load script
- *    (mặc định: cùng origin hoặc http://localhost:3000)
+ * AIMLOCK MODE 10 — Key API Client v1.1
+ * Chỉ nhập KEY (không cần tài khoản)
  */
 (function () {
   "use strict";
 
   const API_BASE =
     (typeof window !== "undefined" && window.ALM10_API_BASE) ||
-    (location.protocol === "file:" ? "http://localhost:3000" : location.origin.replace(/:\d+$/, ":3000"));
+    (location.protocol === "file:" ? "http://localhost:3000" : location.origin);
 
-  const STORAGE = "alm10_session_v3"; // session cache local (chỉ lưu user + token info từ server)
+  const STORAGE = "alm10_session_v4";
+  const DEVICE_KEY = "alm10_device_id_v1";
 
   const gate = document.getElementById("keyGate");
   const success = document.getElementById("keySuccess");
@@ -27,8 +22,32 @@
   const ksTime = document.getElementById("ksTime");
   const ksEnter = document.getElementById("ksEnter");
 
-  function normalizeUser(raw) {
-    return String(raw || "").trim();
+  // Ẩn ô tài khoản — chỉ hiện KEY
+  (function hideUserField() {
+    if (userInput) {
+      const field = userInput.closest(".key-field");
+      if (field) field.style.display = "none";
+      userInput.value = "";
+    }
+    const passLabel = document.querySelector('label[for="kgPass"]');
+    if (passLabel) passLabel.textContent = "KEY";
+    if (passInput) {
+      passInput.placeholder = "Nhập key...";
+      passInput.autocomplete = "off";
+    }
+  })();
+
+  function getDeviceId() {
+    try {
+      let id = localStorage.getItem(DEVICE_KEY);
+      if (!id) {
+        id = "d_" + Math.random().toString(36).slice(2) + Date.now().toString(36);
+        localStorage.setItem(DEVICE_KEY, id);
+      }
+      return id;
+    } catch {
+      return "d_tmp_" + Date.now();
+    }
   }
 
   function deviceName() {
@@ -47,22 +66,16 @@
     try {
       const raw = localStorage.getItem(STORAGE);
       return raw ? JSON.parse(raw) : null;
-    } catch {
-      return null;
-    }
+    } catch { return null; }
   }
-
   function saveLocal(s) {
-    try {
-      localStorage.setItem(STORAGE, JSON.stringify(s));
-    } catch {}
+    try { localStorage.setItem(STORAGE, JSON.stringify(s)); } catch {}
   }
-
   function clearLocal() {
     try {
       localStorage.removeItem(STORAGE);
+      localStorage.removeItem("alm10_session_v3");
       localStorage.removeItem("alm10_session_v2");
-      localStorage.removeItem("alm10_session_v1");
     } catch {}
   }
 
@@ -76,11 +89,7 @@
   }
 
   function escapeHtml(str) {
-    return String(str)
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;");
+    return String(str).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
   }
 
   function lockUI() {
@@ -91,7 +100,6 @@
     if (shell) shell.style.visibility = "hidden";
     if (nav) nav.style.visibility = "hidden";
   }
-
   function unlockUI() {
     document.body.style.overflow = "";
     if (gate) gate.hidden = true;
@@ -105,27 +113,12 @@
   function showSuccess(s) {
     if (!ksMsg || !ksTime) return;
     ksMsg.innerHTML =
-      "Kích hoạt thiết bị cho <b>" +
-      escapeHtml(s.user) +
-      "</b><br/>" +
-      "Key: <b>" +
-      escapeHtml(s.key) +
-      "</b> (" +
-      escapeHtml(s.label || "") +
-      ")<br/>" +
-      "Thiết bị: <b>" +
-      escapeHtml(s.device || "") +
-      "</b>";
-
+      "Key: <b>" + escapeHtml(s.key) + "</b> (" + escapeHtml(s.label || "") + ")<br/>" +
+      "Thiết bị: <b>" + escapeHtml(s.device || "") + "</b>";
     ksTime.innerHTML =
-      "Bắt đầu: <b>" +
-      escapeHtml(s.startText || "") +
-      "</b><br/>" +
-      "Hết hạn: <b>" +
-      escapeHtml(s.expireText || "") +
-      "</b><br/>" +
+      "Bắt đầu: <b>" + escapeHtml(s.startText || "") + "</b><br/>" +
+      "Hết hạn: <b>" + escapeHtml(s.expireText || "") + "</b><br/>" +
       escapeHtml(s.remaining || "");
-
     if (success) success.hidden = false;
   }
 
@@ -138,53 +131,35 @@
 
   async function activate() {
     showError("");
-    const user = normalizeUser(userInput && userInput.value);
-    const key = (passInput && passInput.value || "").trim();
+    const key = ((passInput && passInput.value) || "").trim();
+    if (!key) { showError("Vui lòng nhập key."); return; }
 
-    if (!user) {
-      showError("Vui lòng nhập tài khoản.");
-      return;
-    }
-    if (!key) {
-      showError("Vui lòng nhập mật khẩu / key.");
-      return;
-    }
-
-    if (submitBtn) {
-      submitBtn.disabled = true;
-      submitBtn.textContent = "ĐANG KÍCH HOẠT...";
-    }
+    if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = "ĐANG KÍCH HOẠT..."; }
 
     try {
       const data = await apiPost("/api/activate", {
-        user,
-        key,
+        key: key,
+        deviceId: getDeviceId(),
         device: deviceName()
       });
-
       if (!data.ok || !data.session) {
         showError(data.error || "Kích hoạt thất bại");
         return;
       }
-
       saveLocal(data.session);
       showSuccess(data.session);
-      startTick(data.session.user);
+      startTick();
     } catch (e) {
-      showError("Không kết nối được API. Kiểm tra server.");
+      showError("Không kết nối được API. Thử lại sau.");
       console.error(e);
     } finally {
-      if (submitBtn) {
-        submitBtn.disabled = false;
-        submitBtn.textContent = "KÍCH HOẠT";
-      }
+      if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = "KÍCH HOẠT"; }
     }
   }
 
-  async function validateUser(user) {
+  async function validateDevice() {
     try {
-      const data = await apiPost("/api/validate", { user });
-      return data;
+      return await apiPost("/api/validate", { deviceId: getDeviceId() });
     } catch {
       return { ok: false, valid: false };
     }
@@ -199,14 +174,10 @@
     const btn = document.getElementById("settings-logout-btn");
     if (!btn) return;
     btn.addEventListener("click", function () {
-      const s = loadLocal();
-      if (s && s.user) {
-        apiPost("/api/logout", { user: s.user }).catch(function () {});
-      }
+      apiPost("/api/logout", { deviceId: getDeviceId() }).catch(function () {});
       clearLocal();
       if (tickTimer) clearInterval(tickTimer);
       lockUI();
-      if (userInput) userInput.value = "";
       if (passInput) passInput.value = "";
       showError("");
       if (success) success.hidden = true;
@@ -214,10 +185,10 @@
   }
 
   let tickTimer = null;
-  function startTick(user) {
+  function startTick() {
     if (tickTimer) clearInterval(tickTimer);
     tickTimer = setInterval(async function () {
-      const data = await validateUser(user);
+      const data = await validateDevice();
       if (!data.valid || !data.session) {
         clearInterval(tickTimer);
         clearLocal();
@@ -230,7 +201,7 @@
       saveLocal(data.session);
       if (success && !success.hidden) showSuccess(data.session);
       updateHomeKeyInfo();
-    }, 15000); // check mỗi 15s (không spam API)
+    }, 15000);
   }
 
   function updateHomeKeyInfo() {
@@ -242,60 +213,47 @@
     const elExpire = document.getElementById("kiExpire");
     const elLeft = document.getElementById("kiLeft");
     const elStatus = document.getElementById("kiStatus");
-    if (!elUser) return;
+    if (!elKey && !elUser) return;
 
     const s = loadLocal();
-    if (!s || !s.user) {
-      elUser.textContent = "—";
+    if (!s || !s.key) {
+      if (elUser) elUser.textContent = "—";
       if (elKey) elKey.textContent = "—";
       if (elType) elType.textContent = "—";
       if (elDevice) elDevice.textContent = "—";
       if (elStart) elStart.textContent = "—";
       if (elExpire) elExpire.textContent = "—";
       if (elLeft) elLeft.textContent = "Hết hạn / Chưa kích hoạt";
-      if (elStatus) {
-        elStatus.textContent = "Hết hạn";
-        elStatus.classList.add("is-expired");
-      }
+      if (elStatus) { elStatus.textContent = "Hết hạn"; elStatus.classList.add("is-expired"); }
       return;
     }
 
-    elUser.textContent = s.user || "—";
+    if (elUser) elUser.textContent = s.device || "—";
     if (elKey) elKey.textContent = s.key || "—";
     if (elType) elType.textContent = s.label || "—";
     if (elDevice) elDevice.textContent = s.device || "—";
     if (elStart) elStart.textContent = s.startText || "—";
     if (elExpire) elExpire.textContent = s.expireText || "—";
     if (elLeft) elLeft.textContent = s.remaining || "—";
-    if (elStatus) {
-      elStatus.textContent = "Đang hoạt động";
-      elStatus.classList.remove("is-expired");
-    }
+    if (elStatus) { elStatus.textContent = "Đang hoạt động"; elStatus.classList.remove("is-expired"); }
   }
 
-  // ---- INIT ----
   (async function init() {
-    // Vô hiệu hóa script key cũ nếu còn chạy (tránh conflict)
-    try {
-      window.ALM10Key = {
-        updateHome: updateHomeKeyInfo,
-        clear: function () {
-          clearLocal();
-          lockUI();
-        },
-        session: loadLocal,
-        apiBase: API_BASE
-      };
-    } catch {}
+    window.ALM10Key = {
+      updateHome: updateHomeKeyInfo,
+      clear: function () { clearLocal(); lockUI(); },
+      session: loadLocal,
+      apiBase: API_BASE
+    };
 
     const local = loadLocal();
-    if (local && local.user) {
-      const data = await validateUser(local.user);
+    if (local && local.key) {
+      const data = await validateDevice();
       if (data.valid && data.session) {
         saveLocal(data.session);
         unlockUI();
         updateHomeKeyInfo();
-        startTick(data.session.user);
+        startTick();
       } else {
         clearLocal();
         lockUI();
@@ -305,36 +263,26 @@
     }
 
     if (submitBtn) {
-      // remove old listeners by cloning
       const neo = submitBtn.cloneNode(true);
       submitBtn.parentNode.replaceChild(neo, submitBtn);
       neo.addEventListener("click", activate);
     }
-
     if (passInput) {
       passInput.addEventListener("keydown", function (e) {
         if (e.key === "Enter") activate();
       });
     }
-    if (userInput) {
-      userInput.addEventListener("keydown", function (e) {
-        if (e.key === "Enter" && passInput) passInput.focus();
-      });
-    }
     if (ksEnter) {
       ksEnter.addEventListener("click", function () {
         const s = loadLocal();
-        if (s && s.user) {
-          enterApp();
-          startTick(s.user);
-        } else {
+        if (s && s.key) { enterApp(); startTick(); }
+        else {
           if (success) success.hidden = true;
           lockUI();
           showError("Key đã hết hạn.");
         }
       });
     }
-
     if (document.readyState === "loading") {
       document.addEventListener("DOMContentLoaded", bindLogout);
     } else {
