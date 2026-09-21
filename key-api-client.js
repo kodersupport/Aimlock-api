@@ -247,13 +247,17 @@
     if (el) return el;
     el = document.createElement("div");
     el.id = "almAnnounceBanner";
-    el.style.cssText = "display:none;position:relative;z-index:15;margin:0 0 12px;padding:12px 14px;border-radius:14px;border:1px solid rgba(255,108,124,0.35);background:linear-gradient(180deg,rgba(255,59,82,0.22),rgba(255,59,82,0.08));color:#fff4f5;font-size:12.5px;line-height:1.5;font-weight:600;box-shadow:0 8px 24px rgba(0,0,0,0.25)";
-    var shell = document.querySelector(".app-shell") || document.body;
-    var header = shell.querySelector(".app-header");
-    if (header && header.parentNode) {
-      header.parentNode.insertBefore(el, header.nextSibling);
+    el.style.cssText = "display:none;position:relative;z-index:100000;margin:10px 14px 0;padding:12px 14px;border-radius:14px;border:1px solid rgba(255,108,124,0.45);background:linear-gradient(180deg,rgba(255,59,82,0.35),rgba(255,59,82,0.12));color:#fff4f5;font-size:13px;line-height:1.55;font-weight:600;box-shadow:0 8px 28px rgba(0,0,0,0.35);text-align:center;white-space:pre-wrap;word-break:break-word";
+    // Hiện trên màn hình key gate (ưu tiên) + trong app
+    var gate = document.getElementById("keyGate");
+    var box = gate && gate.querySelector(".key-box");
+    if (box) {
+      box.insertBefore(el, box.firstChild);
     } else {
-      shell.insertBefore(el, shell.firstChild);
+      var shell = document.querySelector(".app-shell") || document.body;
+      var header = shell.querySelector(".app-header");
+      if (header && header.parentNode) header.parentNode.insertBefore(el, header.nextSibling);
+      else shell.insertBefore(el, shell.firstChild);
     }
     return el;
   }
@@ -274,6 +278,8 @@
   }
 
   (async function init() {
+    fetchAnnounce();
+    setInterval(fetchAnnounce, 20000);
     window.ALM10Key = {
       updateHome: updateHomeKeyInfo,
       clear: function () { clearLocal(); lockUI(); },
