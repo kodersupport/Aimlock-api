@@ -1,6 +1,6 @@
 /**
- * AIMLOCK MODE 10 — API GỐC v1.1
- * Chỉ nhập KEY — theo dõi thiết bị
+ * AIMLOCK MODE 10 — API GỐC v1.2
+ * Key-only + devices + JSONBin persist + thông báo admin
  */
 const http = require("http");
 const fs = require("fs");
@@ -13,9 +13,8 @@ const HOST = process.env.HOST || "0.0.0.0";
 const DATA_DIR = path.join(__dirname, "data");
 const DB_FILE = path.join(DATA_DIR, "db.json");
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "TIENHOC_ADMIN_2026";
-// JSONBin.io free — dữ liệu KHÔNG mất khi Render ngủ/restart
-const JSONBIN_BIN_ID = process.env.JSONBIN_BIN_ID || "";
-const JSONBIN_API_KEY = process.env.JSONBIN_API_KEY || "";
+const JSONBIN_BIN_ID = (process.env.JSONBIN_BIN_ID || "").trim();
+const JSONBIN_API_KEY = (process.env.JSONBIN_API_KEY || "").trim();
 
 const PRESETS = {
   day:   { label: "1 ngày",   days: 1 },
@@ -28,7 +27,13 @@ const PRESETS = {
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
 function defaultDB() {
-  const init = { keys: {}, sessions: {}, history: [], firstActivate: {}, announce: { text: "", enabled: false, updatedAt: null } };
+  const init = {
+    keys: {},
+    sessions: {},
+    history: [],
+    firstActivate: {},
+    announce: { text: "", enabled: false, updatedAt: null }
+  };
   const seed = [
     ["NTH-31", "Vĩnh viễn", null, true],
     ["ALM10", "1 ngày", 1, false],
@@ -45,43 +50,68 @@ function defaultDB() {
   return init;
 }
 
+function normalizeDB(o) {
+  if (!o || typeof o !== "object") return defaultDB();
+  if (!o.keys || typeof o.keys !== "object") o.keys = {};
+  if (!o.sessions || typeof o.sessions !== "object") o.sessions = {};
+  if (!Array.isArray(o.history)) o.history = [];
+  if (!o.firstActivate || typeof o.firstActivate !== "object") o.firstActivate = {};
+  if (!o.announce || typeof o.announce !== "object") {
+    o.announce = { text: "", enabled: false, updatedAt: null };
+  }
+  return o;
+}
+
 function readLocal() {
   try {
     if (fs.existsSync(DB_FILE)) {
-      const o = JSON.parse(fs.readFileSync(DB_FILE, "utf8"));
-      if (o && typeof o === "object" && o.keys) return o;
+      return normalizeDB(JSON.parse(fs.readFileSync(DB_FILE, "utf8")));
     }
   } catch (e) {}
   return null;
 }
 
 function writeLocal(data) {
-  try { fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), "utf8"); } catch (e) {}
+  try {
+    fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), "utf8");
+  } catch (e) {}
 }
 
 async function readRemote() {
-  if (!JSONBIN_BIN_ID || !JSONBIN_API_KEY) return null;
+  if (!JSONBIN_BIN_ID || !JSONBIN_API_KEY) {
+    return { ok: false, reason: "not_configured", data: null };
+  }
   try {
     const r = await fetch("https://api.jsonbin.io/v3/b/" + JSONBIN_BIN_ID + "/latest", {
-      headers: { "X-Master-Key": JSONBIN_API_KEY }
+      headers: {
+        "X-Master-Key": JSONBIN_API_KEY,
+        "X-Bin-Meta": "false"
+      }
     });
+    const text = await r.text();
+    let j = null;
+    try { j = JSON.parse(text); } catch (e) {}
     if (!r.ok) {
-      console.log("JSONBin read status:", r.status);
-      return null;
+      console.log("JSONBin READ fail:", r.status, text.slice(0, 200));
+      return { ok: false, reason: "http_" + r.status, data: null };
     }
-    const j = await r.json();
-    const rec = j.record;
-    if (rec && typeof rec === "object" && rec.keys) return rec;
+    const rec = j && (j.record !== undefined ? j.record : j);
+    if (!rec || typeof rec !== "object") {
+      return { ok: false, reason: "bad_shape", data: null };
+    }
+    return { ok: true, reason: "ok", data: normalizeDB(rec) };
   } catch (e) {
-    console.log("JSONBin read error:", e.message);
+    console.log("JSONBin READ error:", e.message);
+    return { ok: false, reason: "exception", data: null };
   }
-  return null;
 }
 
 let _saveRemoteTimer = null;
+let _persistReady = false;
+let _persistStatus = "starting";
+
 function writeRemote(data) {
   if (!JSONBIN_BIN_ID || !JSONBIN_API_KEY) return;
-  // debounce 800ms — tránh spam API
   if (_saveRemoteTimer) clearTimeout(_saveRemoteTimer);
   _saveRemoteTimer = setTimeout(async () => {
     try {
@@ -93,17 +123,16 @@ function writeRemote(data) {
         },
         body: JSON.stringify(data)
       });
-      if (!r.ok) console.log("JSONBin write status:", r.status);
+      if (!r.ok) {
+        const t = await r.text();
+        console.log("JSONBin WRITE fail:", r.status, t.slice(0, 200));
+      } else {
+        console.log("JSONBin WRITE ok — keys:", Object.keys(data.keys || {}).length);
+      }
     } catch (e) {
-      console.log("JSONBin write error:", e.message);
+      console.log("JSONBin WRITE error:", e.message);
     }
-  }, 800);
-}
-
-function loadDBSync() {
-  const local = readLocal();
-  if (local) return local;
-  return defaultDB();
+  }, 500);
 }
 
 function saveDB(data) {
@@ -111,23 +140,35 @@ function saveDB(data) {
   writeRemote(data);
 }
 
-let db = loadDBSync();
+let db = normalizeDB(readLocal() || defaultDB());
 
-// Load remote khi khởi động (ghi đè local nếu remote có data thật)
-(async function bootstrapRemote() {
+async function bootstrapRemote() {
   const remote = await readRemote();
-  if (remote && remote.keys && Object.keys(remote.keys).length > 0) {
-    db = remote;
-    writeLocal(db);
-    console.log("DB loaded from JSONBin — keys:", Object.keys(db.keys).length);
-  } else if (JSONBIN_BIN_ID && JSONBIN_API_KEY) {
-    // remote trống → đẩy local/default lên
-    writeRemote(db);
-    console.log("DB seeded to JSONBin");
+  if (remote.ok && remote.data) {
+    const n = Object.keys(remote.data.keys || {}).length;
+    if (n > 0) {
+      db = remote.data;
+      writeLocal(db);
+      _persistStatus = "loaded_remote (" + n + " keys)";
+      console.log("DB from JSONBin:", n, "keys");
+    } else {
+      // Remote thật sự trống → seed 1 lần
+      saveDB(db);
+      _persistStatus = "seeded_empty_remote";
+      console.log("JSONBin empty → seeded defaults");
+    }
+  } else if (!JSONBIN_BIN_ID || !JSONBIN_API_KEY) {
+    _persistStatus = "no_jsonbin_env";
+    console.log("WARN: Chưa có JSONBIN_BIN_ID / JSONBIN_API_KEY — data MẤT khi restart!");
   } else {
-    console.log("WARN: Chưa cấu hình JSONBIN_BIN_ID / JSONBIN_API_KEY — data sẽ MẤT khi Render restart!");
+    // Đọc remote lỗi → KHÔNG ghi đè remote
+    _persistStatus = "read_failed:" + remote.reason + " (kept local/default, NOT overwrite)";
+    console.log("JSONBin read failed → giữ data local, KHÔNG ghi đè remote. reason=", remote.reason);
   }
-})();
+  _persistReady = true;
+}
+
+const bootPromise = bootstrapRemote();
 
 function json(res, status, data) {
   const body = JSON.stringify(data);
@@ -144,8 +185,16 @@ function json(res, status, data) {
 function readBody(req) {
   return new Promise((resolve, reject) => {
     let raw = "";
-    req.on("data", (c) => { raw += c; if (raw.length > 1e6) { req.destroy(); reject(new Error("big")); } });
-    req.on("end", () => { try { resolve(raw ? JSON.parse(raw) : {}); } catch { resolve({}); } });
+    req.on("data", (c) => {
+      raw += c;
+      if (raw.length > 1e6) {
+        req.destroy();
+        reject(new Error("big"));
+      }
+    });
+    req.on("end", () => {
+      try { resolve(raw ? JSON.parse(raw) : {}); } catch { resolve({}); }
+    });
     req.on("error", reject);
   });
 }
@@ -155,7 +204,9 @@ function isAdmin(req) {
   const token = req.headers["x-admin-token"] || (req.headers.authorization || "").replace(/^Bearer\s+/i, "") || "";
   return token === ADMIN_TOKEN;
 }
-function genKey(prefix) { return (prefix || "ALM") + "-" + crypto.randomBytes(4).toString("hex").toUpperCase(); }
+function genKey(prefix) {
+  return (prefix || "ALM") + "-" + crypto.randomBytes(4).toString("hex").toUpperCase();
+}
 function durationMs(meta) {
   if (!meta || meta.permanent || meta.days == null) return null;
   return meta.days * 24 * 60 * 60 * 1000;
@@ -170,7 +221,10 @@ function isSessionValid(session) {
 function deviceFromUA(ua) {
   ua = ua || "";
   if (/iPhone|iPad|iPod/i.test(ua)) return "iPhone / iPad";
-  if (/Android/i.test(ua)) { const m = ua.match(/Android\s([\d.]+)/); return m ? "Android " + m[1] : "Android"; }
+  if (/Android/i.test(ua)) {
+    const m = ua.match(/Android\s([\d.]+)/);
+    return m ? "Android " + m[1] : "Android";
+  }
   if (/Windows/i.test(ua)) return "Windows PC";
   if (/Mac/i.test(ua)) return "Mac";
   return "Web Browser";
@@ -179,7 +233,8 @@ function formatDate(ts) {
   if (!ts) return "—";
   const d = new Date(ts);
   const p = (n) => String(n).padStart(2, "0");
-  return p(d.getDate()) + "/" + p(d.getMonth() + 1) + "/" + d.getFullYear() + " " + p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds());
+  return p(d.getDate()) + "/" + p(d.getMonth() + 1) + "/" + d.getFullYear() + " " +
+    p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds());
 }
 function remainingText(session) {
   if (!session) return "Không xác định";
@@ -187,7 +242,10 @@ function remainingText(session) {
   const left = session.expiresAt - Date.now();
   if (left <= 0) return "Đã hết hạn";
   const sec = Math.floor(left / 1000);
-  const d = Math.floor(sec / 86400), h = Math.floor((sec % 86400) / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+  const d = Math.floor(sec / 86400);
+  const h = Math.floor((sec % 86400) / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
   const parts = [];
   if (d > 0) parts.push(d + " ngày");
   if (h > 0) parts.push(h + " giờ");
@@ -203,12 +261,18 @@ function sessionsForKey(keyCode) {
   const code = normalizeKey(keyCode);
   return Object.values(db.sessions).filter((s) => normalizeKey(s.key) === code);
 }
-function validDevicesForKey(keyCode) { return sessionsForKey(keyCode).filter(isSessionValid); }
+function validDevicesForKey(keyCode) {
+  return sessionsForKey(keyCode).filter(isSessionValid);
+}
 function sessionPayload(session) {
   return {
-    key: session.key, deviceId: session.deviceId, device: session.device,
-    activatedAt: session.activatedAt, expiresAt: session.expiresAt,
-    label: session.label, permanent: session.permanent,
+    key: session.key,
+    deviceId: session.deviceId,
+    device: session.device,
+    activatedAt: session.activatedAt,
+    expiresAt: session.expiresAt,
+    label: session.label,
+    permanent: session.permanent,
     remaining: remainingText(session),
     startText: formatDate(session.activatedAt),
     expireText: session.expiresAt == null ? "Vĩnh viễn" : formatDate(session.expiresAt)
@@ -216,19 +280,34 @@ function sessionPayload(session) {
 }
 
 async function handle(req, res) {
+  await bootPromise;
+
   const url = new URL(req.url, "http://" + (req.headers.host || "localhost"));
   const method = req.method.toUpperCase();
   const p = url.pathname.replace(/\/+$/, "") || "/";
 
   if (method === "OPTIONS") {
-    res.writeHead(204, { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "GET,POST,PUT,DELETE,OPTIONS", "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Admin-Token" });
+    res.writeHead(204, {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "GET,POST,PUT,DELETE,OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Admin-Token"
+    });
     return res.end();
   }
 
   if (method === "GET" && p === "/api/health") {
-    return json(res, 200, { ok: true, name: "AIMLOCK MODE 10 API", version: "1.1.0", time: new Date().toISOString() });
+    return json(res, 200, {
+      ok: true,
+      name: "AIMLOCK MODE 10 API",
+      version: "1.2.0",
+      time: new Date().toISOString(),
+      persist: !!(JSONBIN_BIN_ID && JSONBIN_API_KEY),
+      persistStatus: _persistStatus,
+      keyCount: Object.keys(db.keys || {}).length
+    });
+  }
 
-  // PUBLIC: thông báo từ admin
+  // PUBLIC announce
   if (method === "GET" && p === "/api/announce") {
     if (!db.announce) db.announce = { text: "", enabled: false, updatedAt: null };
     return json(res, 200, {
@@ -239,8 +318,6 @@ async function handle(req, res) {
         updatedAt: db.announce.updatedAt || null
       }
     });
-  }
-
   }
 
   if (method === "POST" && p === "/api/activate") {
@@ -260,40 +337,45 @@ async function handle(req, res) {
     if (keyMeta.maxUses > 0 && others.length >= keyMeta.maxUses) {
       const existing = db.sessions[deviceId];
       if (!existing || normalizeKey(existing.key) !== keyCode) {
-        return json(res, 403, { ok: false, error: "Key đã đủ số thiết bị cho phép (" + keyMeta.maxUses + ")." });
+        return json(res, 403, {
+          ok: false,
+          error: "Key đã đủ số thiết bị cho phép (" + keyMeta.maxUses + ")."
+        });
       }
     }
 
     if (!db.firstActivate) db.firstActivate = {};
-    if (!db.announce) db.announce = { text: "", enabled: false, updatedAt: null };
     const stampKey = deviceId + "|" + keyCode;
     const prev = db.sessions[deviceId];
     const prevStamp = db.firstActivate[stampKey];
 
-    // Giữ mốc kích hoạt LẦN ĐẦU — logout không reset thời gian
     let activatedAt = Date.now();
-    if (prevStamp) {
-      activatedAt = Number(prevStamp);
-    } else if (prev && normalizeKey(prev.key) === keyCode && prev.activatedAt) {
+    if (prevStamp) activatedAt = Number(prevStamp);
+    else if (prev && normalizeKey(prev.key) === keyCode && prev.activatedAt) {
       activatedAt = Number(prev.activatedAt);
     }
 
     const ms = durationMs(keyMeta);
     let expiresAt = ms == null ? null : activatedAt + ms;
 
-    // Đã hết hạn theo mốc lần đầu → không cho kích hoạt lại cùng key
     if (expiresAt != null && Date.now() >= expiresAt) {
       logHistory("activate_denied_expired", { key: keyCode, deviceId });
       saveDB(db);
-      return json(res, 403, { ok: false, error: "Key đã hết hạn. Vui lòng liên hệ ADMIN TIEN HOC." });
+      return json(res, 403, {
+        ok: false,
+        error: "Key đã hết hạn. Vui lòng liên hệ ADMIN TIEN HOC."
+      });
     }
 
-    // Đổi sang key KHÁC trên cùng máy → mốc mới cho key mới (key cũ giữ stamp riêng)
-    // (stamp theo device+key nên key mới tự có mốc riêng)
-
     const session = {
-      deviceId, key: keyMeta.code, device, activatedAt, expiresAt,
-      lastSeen: Date.now(), label: keyMeta.label, permanent: !!keyMeta.permanent
+      deviceId,
+      key: keyMeta.code,
+      device,
+      activatedAt,
+      expiresAt,
+      lastSeen: Date.now(),
+      label: keyMeta.label,
+      permanent: !!keyMeta.permanent
     };
     const isNewDeviceOnKey = !prevStamp;
     db.sessions[deviceId] = session;
@@ -302,7 +384,8 @@ async function handle(req, res) {
     logHistory("activate", { key: keyMeta.code, deviceId, device });
     saveDB(db);
     return json(res, 200, {
-      ok: true, session: sessionPayload(session),
+      ok: true,
+      session: sessionPayload(session),
       deviceCount: validDevicesForKey(keyCode).length,
       maxDevices: keyMeta.maxUses || 0
     });
@@ -322,7 +405,9 @@ async function handle(req, res) {
     session.lastSeen = Date.now();
     saveDB(db);
     return json(res, 200, {
-      ok: true, valid: true, session: sessionPayload(session),
+      ok: true,
+      valid: true,
+      session: sessionPayload(session),
       deviceCount: validDevicesForKey(session.key).length
     });
   }
@@ -331,7 +416,6 @@ async function handle(req, res) {
     const body = await readBody(req);
     const deviceId = String(body.deviceId || "").trim();
     if (deviceId && db.sessions[deviceId]) {
-      // Chỉ gỡ session online — GIỮ firstActivate để vào lại không reset thời hạn
       logHistory("logout", { deviceId, key: db.sessions[deviceId].key });
       delete db.sessions[deviceId];
       saveDB(db);
@@ -343,8 +427,6 @@ async function handle(req, res) {
     return json(res, 401, { ok: false, error: "Unauthorized — cần Admin Token" });
   }
 
-  
-  // ADMIN: cập nhật thông báo
   if (method === "PUT" && p === "/api/admin/announce") {
     const body = await readBody(req);
     if (!db.announce) db.announce = { text: "", enabled: false, updatedAt: null };
@@ -361,26 +443,33 @@ async function handle(req, res) {
     return json(res, 200, { ok: true, announce: db.announce });
   }
 
-if (method === "GET" && p === "/api/admin/keys") {
+  if (method === "GET" && p === "/api/admin/keys") {
     const q = String(url.searchParams.get("q") || "").trim().toUpperCase();
     let list = Object.values(db.keys).map((k) => {
       const all = sessionsForKey(k.code);
       const valid = all.filter(isSessionValid);
       return {
-        ...k, usedCount: k.usedCount || 0,
-        deviceCount: valid.length, totalDevicesEver: all.length,
+        ...k,
+        usedCount: k.usedCount || 0,
+        deviceCount: valid.length,
+        totalDevicesEver: all.length,
         devices: valid.map((s) => ({
-          deviceId: s.deviceId, device: s.device,
-          activatedAt: s.activatedAt, lastSeen: s.lastSeen,
-          startText: formatDate(s.activatedAt), lastSeenText: formatDate(s.lastSeen),
+          deviceId: s.deviceId,
+          device: s.device,
+          activatedAt: s.activatedAt,
+          lastSeen: s.lastSeen,
+          startText: formatDate(s.activatedAt),
+          lastSeenText: formatDate(s.lastSeen),
           remaining: remainingText(s)
         }))
       };
     });
     if (q) {
-      list = list.filter((k) =>
-        k.code.includes(q) || (k.note && String(k.note).toUpperCase().includes(q)) ||
-        (k.label && String(k.label).toUpperCase().includes(q))
+      list = list.filter(
+        (k) =>
+          k.code.includes(q) ||
+          (k.note && String(k.note).toUpperCase().includes(q)) ||
+          (k.label && String(k.label).toUpperCase().includes(q))
       );
     }
     return json(res, 200, { ok: true, keys: list });
@@ -395,10 +484,14 @@ if (method === "GET" && p === "/api/admin/keys") {
     return json(res, 200, {
       ok: true,
       key: {
-        ...keyMeta, deviceCount: valid.length, totalDevicesEver: all.length,
+        ...keyMeta,
+        deviceCount: valid.length,
+        totalDevicesEver: all.length,
         devices: valid.map((s) => ({
-          deviceId: s.deviceId, device: s.device,
-          startText: formatDate(s.activatedAt), lastSeenText: formatDate(s.lastSeen),
+          deviceId: s.deviceId,
+          device: s.device,
+          startText: formatDate(s.activatedAt),
+          lastSeenText: formatDate(s.lastSeen),
           remaining: remainingText(s),
           expireText: s.expiresAt == null ? "Vĩnh viễn" : formatDate(s.expiresAt)
         }))
@@ -418,8 +511,15 @@ if (method === "GET" && p === "/api/admin/keys") {
     const code = normalizeKey(body.code || genKey("ALM"));
     if (db.keys[code]) return json(res, 409, { ok: false, error: "Key đã tồn tại: " + code });
     const entry = {
-      code, label: meta.label, days: meta.permanent ? null : meta.days, permanent: !!meta.permanent,
-      createdAt: Date.now(), maxUses: Number(body.maxUses) || 0, usedCount: 0, active: true, note: body.note || ""
+      code,
+      label: meta.label,
+      days: meta.permanent ? null : meta.days,
+      permanent: !!meta.permanent,
+      createdAt: Date.now(),
+      maxUses: Number(body.maxUses) || 0,
+      usedCount: 0,
+      active: true,
+      note: body.note || ""
     };
     db.keys[code] = entry;
     logHistory("key_create", { code });
@@ -468,8 +568,10 @@ if (method === "GET" && p === "/api/admin/keys") {
 
   if (method === "GET" && p === "/api/admin/sessions") {
     const list = Object.values(db.sessions).map((s) => ({
-      ...sessionPayload(s), valid: isSessionValid(s),
-      lastSeen: s.lastSeen, lastSeenText: formatDate(s.lastSeen)
+      ...sessionPayload(s),
+      valid: isSessionValid(s),
+      lastSeen: s.lastSeen,
+      lastSeenText: formatDate(s.lastSeen)
     }));
     return json(res, 200, { ok: true, sessions: list });
   }
@@ -480,15 +582,22 @@ if (method === "GET" && p === "/api/admin/keys") {
     return json(res, 200, {
       ok: true,
       stats: {
-        totalKeys: keys.length, activeKeys: keys.filter((k) => k.active).length,
-        totalSessions: sessions.length, validSessions: sessions.filter(isSessionValid).length,
-        historyCount: db.history.length
+        totalKeys: keys.length,
+        activeKeys: keys.filter((k) => k.active).length,
+        totalSessions: sessions.length,
+        validSessions: sessions.filter(isSessionValid).length,
+        historyCount: db.history.length,
+        persist: !!(JSONBIN_BIN_ID && JSONBIN_API_KEY),
+        persistStatus: _persistStatus
       }
     });
   }
 
   if (method === "GET" && (p === "/" || p === "/app")) {
-    for (const appPath of [path.join(__dirname, "public", "app.html"), path.join(__dirname, "app.html")]) {
+    for (const appPath of [
+      path.join(__dirname, "public", "app.html"),
+      path.join(__dirname, "app.html")
+    ]) {
       if (fs.existsSync(appPath)) {
         res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
         return res.end(fs.readFileSync(appPath));
@@ -496,7 +605,10 @@ if (method === "GET" && p === "/api/admin/keys") {
     }
   }
   if (method === "GET" && p === "/admin") {
-    for (const adminPath of [path.join(__dirname, "public", "admin.html"), path.join(__dirname, "admin.html")]) {
+    for (const adminPath of [
+      path.join(__dirname, "public", "admin.html"),
+      path.join(__dirname, "admin.html")
+    ]) {
       if (fs.existsSync(adminPath)) {
         res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
         return res.end(fs.readFileSync(adminPath));
@@ -504,22 +616,38 @@ if (method === "GET" && p === "/api/admin/keys") {
     }
   }
   if (method === "GET") {
-    const safe = p.replace(/\\/g, "/").split("/").filter((x) => x !== "..").join("/") || "/";
+    const safe =
+      p
+        .replace(/\\/g, "/")
+        .split("/")
+        .filter((x) => x !== "..")
+        .join("/") || "/";
     const name = safe === "/" ? "app.html" : safe.replace(/^\//, "");
     for (const c of [path.join(__dirname, "public", name), path.join(__dirname, name)]) {
       if (c.startsWith(__dirname) && fs.existsSync(c) && fs.statSync(c).isFile()) {
         const ext = path.extname(c).toLowerCase();
-        const types = { ".html": "text/html; charset=utf-8", ".js": "application/javascript", ".css": "text/css", ".json": "application/json" };
+        const types = {
+          ".html": "text/html; charset=utf-8",
+          ".js": "application/javascript",
+          ".css": "text/css",
+          ".json": "application/json"
+        };
         res.writeHead(200, { "Content-Type": types[ext] || "application/octet-stream" });
         return res.end(fs.readFileSync(c));
       }
     }
   }
+
   json(res, 404, { ok: false, error: "Not found", path: p });
 }
 
-http.createServer((req, res) => {
-  handle(req, res).catch((err) => { console.error(err); json(res, 500, { ok: false, error: "Internal Server Error" }); });
-}).listen(PORT, HOST, () => {
-  console.log("AIMLOCK API v1.1 — key-only + devices | http://localhost:" + PORT);
-});
+http
+  .createServer((req, res) => {
+    handle(req, res).catch((err) => {
+      console.error(err);
+      json(res, 500, { ok: false, error: "Internal Server Error" });
+    });
+  })
+  .listen(PORT, HOST, () => {
+    console.log("AIMLOCK API v1.2 | port", PORT, "| jsonbin", !!(JSONBIN_BIN_ID && JSONBIN_API_KEY));
+  });
