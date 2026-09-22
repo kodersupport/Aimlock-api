@@ -169,7 +169,6 @@
     <div class="form-row"><input id="tgToken" type="password" placeholder="Bot Token (tuỳ chọn nếu đã gắn trên Render)" /></div>
     <button type="button" id="btnSaveContact" style="margin-top:8px">Lưu liên hệ + Telegram</button>
     <button type="button" class="ghost" id="btnTestTg" style="margin-top:8px">Gửi tin test</button>
-    <button type="button" class="ok" id="btnHookTg" style="margin-top:8px">Bật điều khiển qua Bot</button>
     <div class="msg" id="contactMsg"></div>
   </div>
 
@@ -365,12 +364,6 @@ document.getElementById("btnTestTg").onclick=async()=>{
   const msg=document.getElementById("contactMsg"); msg.className="msg";
   const r=await api("POST","/api/admin/telegram/test");
   msg.className=r.ok?"msg ok":"msg"; msg.textContent=r.ok?"Đã gửi tin test — kiểm tra Telegram":(r.error||"Lỗi");
-};
-document.getElementById("btnHookTg").onclick=async()=>{
-  const msg=document.getElementById("contactMsg"); msg.className="msg";
-  const r=await api("POST","/api/admin/telegram/setup-webhook",{url:location.origin});
-  msg.className=r.ok?"msg ok":"msg";
-  msg.textContent=r.ok?("Đã bật bot điều khiển\nWebhook: "+(r.webhook||"")):((r.error||JSON.stringify(r.telegram)||"Lỗi"));
 };
 
 async function loadHistory(){
