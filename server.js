@@ -209,16 +209,30 @@ let _persistStatus = "starting";
 
 function writeRemote(data) {
   if (!UPSTASH_URL && !JSONBIN_BIN_ID) return;
-  if (_saveRemoteTimer) clearTimeout(_saveRemoteTimer);
-  _saveRemoteTimer = setTimeout(async () => {
-    const okU = await writeUpstash(data);
-    if (!okU) await writeJsonbin(data);
-  }, 400);
+  // Ghi ngay (không debounce) — tránh mất data khi Render sleep
+  Promise.resolve()
+    .then(async () => {
+      const okU = await writeUpstash(data);
+      if (!okU) await writeJsonbin(data);
+    })
+    .catch((e) => console.log("writeRemote error:", e.message));
+}
+
+async function writeRemoteAwait(data) {
+  const okU = await writeUpstash(data);
+  if (!okU) await writeJsonbin(data);
+  return okU;
 }
 
 function saveDB(data) {
   writeLocal(data);
   writeRemote(data);
+}
+
+// Lưu và chờ ghi remote xong (dùng cho tạo/xóa key)
+async function saveDBAwait(data) {
+  writeLocal(data);
+  await writeRemoteAwait(data);
 }
 
 let db = normalizeDB(readLocal() || defaultDB());
@@ -231,21 +245,38 @@ async function bootstrapRemote() {
     if (n > 0) {
       db = remote.data;
       writeLocal(db);
-      // nếu lấy từ jsonbin mà có upstash → migrate sang upstash
-      if (String(remote.reason).indexOf("jsonbin") === 0 && UPSTASH_URL) {
+      if (String(remote.reason).indexOf("jsonbin") >= 0 && UPSTASH_URL) {
         await writeUpstash(db);
       }
       _persistStatus = "loaded (" + n + " keys) via " + remote.reason;
       console.log("DB loaded:", _persistStatus);
     } else {
-      saveDB(db);
-      _persistStatus = "seeded_empty_remote";
-      console.log("Remote empty → seeded defaults");
+      // Remote trống thật → chỉ seed 1 lần, KHÔNG ghi đè nếu local đã có key custom
+      const localN = Object.keys((db.keys || {})).length;
+      // Double-check Upstash trước khi seed
+      const again = await readUpstash();
+      const n2 = again.ok && again.data ? Object.keys(again.data.keys || {}).length : 0;
+      if (n2 > 0) {
+        db = again.data;
+        writeLocal(db);
+        _persistStatus = "loaded (" + n2 + " keys) via upstash:retry";
+        console.log("DB loaded on retry:", _persistStatus);
+      } else if (localN <= 5) {
+        // chỉ seed khi local cũng chỉ là default
+        await writeRemoteAwait(db);
+        _persistStatus = "seeded_empty_remote";
+        console.log("Remote empty → seeded defaults (safe)");
+      } else {
+        await writeRemoteAwait(db);
+        _persistStatus = "pushed_local_to_empty_remote (" + localN + " keys)";
+        console.log(_persistStatus);
+      }
     }
   } else if (!hasRemote) {
     _persistStatus = "no_remote_env";
     console.log("WARN: Chưa cấu hình UPSTASH hoặc JSONBIN — data MẤT khi restart!");
   } else {
+    // Đọc lỗi → TUYỆT ĐỐI không ghi đè remote
     _persistStatus = "read_failed:" + remote.reason + " (kept local, NOT overwrite)";
     console.log("Remote read failed → keep local. reason=", remote.reason);
   }
@@ -821,7 +852,7 @@ async function handle(req, res) {
     db.firstActivate[stampKey] = activatedAt;
     if (isNewDeviceOnKey) keyMeta.usedCount = (keyMeta.usedCount || 0) + 1;
     logHistory("activate", { key: keyMeta.code, deviceId, device });
-    saveDB(db);
+    await saveDBAwait(db);
     sendTelegram("✅ KÍCH HOẠT\nKey: " + keyMeta.code + "\nThiết bị: " + device + "\nTB đang dùng: " + validDevicesForKey(keyCode).length + (keyMeta.maxUses ? "/" + keyMeta.maxUses : ""));
     return json(res, 200, {
       ok: true,
@@ -1000,7 +1031,7 @@ async function handle(req, res) {
       created.push(entry);
     }
     logHistory("key_bulk_create", { count: created.length, preset: body.preset || meta.label });
-    saveDB(db);
+    await saveDBAwait(db);
     sendTelegram("🔑 TẠO HÀNG LOẠT\nSố lượng: " + created.length + "\nLoại: " + (meta.label || "") + "\nPrefix: " + prefix);
     return json(res, 201, { ok: true, keys: created, count: created.length });
   }
@@ -1035,7 +1066,7 @@ async function handle(req, res) {
       // firstActivate giữ nguyên mốc — chỉ kéo expires
     }
     logHistory("key_extend", { code, addDays, permanent: !!body.permanent });
-    saveDB(db);
+    await saveDBAwait(db);
     sendTelegram("⏰ GIA HẠN\nKey: " + code + "\n" + (body.permanent ? "→ Vĩnh viễn" : ("+" + addDays + " ngày")) + "\nHiện: " + keyMeta.label);
     return json(res, 200, { ok: true, key: keyMeta });
   }
@@ -1080,7 +1111,7 @@ async function handle(req, res) {
     };
     db.keys[code] = entry;
     logHistory("key_create", { code });
-    saveDB(db);
+    await saveDBAwait(db);
     sendTelegram("🔑 KEY MỚI\nMã: " + code + "\nLoại: " + entry.label + "\nMax TB: " + (entry.maxUses || "∞") + "\nNote: " + (entry.note || "—"));
     return json(res, 201, { ok: true, key: entry });
   }
@@ -1111,7 +1142,7 @@ async function handle(req, res) {
     }
     delete db.keys[code];
     logHistory("key_delete", { code });
-    saveDB(db);
+    await saveDBAwait(db);
     sendTelegram("🗑️ XÓA KEY\nMã: " + code);
     return json(res, 200, { ok: true });
   }
