@@ -348,10 +348,17 @@ function telegramEnabled() {
   return !!(token && chat);
 }
 
-async function sendTelegram(text) {
+function getTgToken() {
+  return TELEGRAM_BOT_TOKEN || (db.settings && db.settings.telegramBotToken) || "";
+}
+function getTgChatId() {
+  return String(TELEGRAM_CHAT_ID || (db.settings && db.settings.telegramChatId) || "");
+}
+
+async function sendTelegram(text, chatId) {
   try {
-    const token = TELEGRAM_BOT_TOKEN || (db.settings && db.settings.telegramBotToken) || "";
-    const chat = TELEGRAM_CHAT_ID || (db.settings && db.settings.telegramChatId) || "";
+    const token = getTgToken();
+    const chat = chatId != null ? String(chatId) : getTgChatId();
     if (!token || !chat) return false;
     const url = "https://api.telegram.org/bot" + token + "/sendMessage";
     const r = await fetch(url, {
@@ -372,6 +379,287 @@ async function sendTelegram(text) {
   } catch (e) {
     console.log("Telegram error:", e.message);
     return false;
+  }
+}
+
+function isAllowedTgChat(chatId) {
+  const allowed = getTgChatId();
+  if (!allowed) return false;
+  return String(chatId) === String(allowed);
+}
+
+function tgHelpText() {
+  return [
+    "🤖 AIMLOCK ADMIN BOT",
+    "",
+    "/help — menu lệnh",
+    "/stats — thống kê",
+    "/keys — danh sách key (20 mới)",
+    "/key MÃ — chi tiết 1 key",
+    "/new [ngày|perm] [note] — tạo key",
+    "   vd: /new 30 khachA",
+    "   vd: /new perm VIP",
+    "   vd: /new week",
+    "/bulk số [ngày|perm] — tạo hàng loạt (max 20)",
+    "   vd: /bulk 5 30",
+    "/extend MÃ số_ngày — gia hạn",
+    "   vd: /extend ALM-XXXX 30",
+    "/extend MÃ perm — thành vĩnh viễn",
+    "/off MÃ — tắt key",
+    "/on MÃ — bật key",
+    "/del MÃ — xóa key",
+    "/kick MÃ — kick all TB của key",
+    "/maint on|off [lý do] — bảo trì",
+    "/say tiêu đề | nội dung — bật thông báo",
+    "/sayoff — tắt thông báo",
+    "",
+    "Chỉ Chat ID admin mới dùng được."
+  ].join("\n");
+}
+
+function parseDurationToken(tok) {
+  tok = String(tok || "").toLowerCase();
+  if (tok === "perm" || tok === "vinhvien" || tok === "vv") {
+    return { permanent: true, days: null, label: "Vĩnh viễn", preset: "perm" };
+  }
+  if (tok === "day" || tok === "1d") return { permanent: false, days: 1, label: "1 ngày", preset: "day" };
+  if (tok === "week" || tok === "1w") return { permanent: false, days: 7, label: "1 tuần", preset: "week" };
+  if (tok === "month" || tok === "1m") return { permanent: false, days: 30, label: "1 tháng", preset: "month" };
+  if (tok === "year" || tok === "1y") return { permanent: false, days: 365, label: "1 năm", preset: "year" };
+  const n = Number(tok);
+  if (n > 0) return { permanent: false, days: n, label: n + " ngày", preset: null };
+  return { permanent: false, days: 30, label: "1 tháng", preset: "month" };
+}
+
+async function handleTelegramCommand(chatId, text) {
+  const raw = String(text || "").trim();
+  if (!raw) return;
+  if (!isAllowedTgChat(chatId)) {
+    await sendTelegram("⛔ Không có quyền. Chat ID không khớp admin.", chatId);
+    return;
+  }
+
+  const parts = raw.split(/\s+/);
+  const cmd = parts[0].toLowerCase().split("@")[0];
+  const args = parts.slice(1);
+
+  try {
+    if (cmd === "/start" || cmd === "/help") {
+      await sendTelegram(tgHelpText(), chatId);
+      return;
+    }
+
+    if (cmd === "/stats") {
+      const keys = Object.values(db.keys);
+      const sessions = Object.values(db.sessions).filter(isSessionValid);
+      await sendTelegram(
+        "📊 STATS\nKey: " + keys.length + " (active " + keys.filter(k=>k.active).length + ")\n" +
+        "Online TB: " + sessions.length + "\n" +
+        "Vĩnh viễn: " + keys.filter(k=>k.permanent).length + "\n" +
+        "Bảo trì: " + (db.maintenance && db.maintenance.enabled ? "ON" : "OFF") + "\n" +
+        "Persist: " + _persistStatus,
+        chatId
+      );
+      return;
+    }
+
+    if (cmd === "/keys") {
+      const list = Object.values(db.keys).slice(-20).reverse();
+      if (!list.length) { await sendTelegram("Chưa có key.", chatId); return; }
+      const lines = list.map(k =>
+        (k.active ? "✅" : "⛔") + " " + k.code + " · " + k.label +
+        (k.note ? " · " + k.note : "") +
+        " · TB " + validDevicesForKey(k.code).length
+      );
+      await sendTelegram("🔑 KEYS (20 gần)\n" + lines.join("\n"), chatId);
+      return;
+    }
+
+    if (cmd === "/key") {
+      const code = normalizeKey(args[0] || "");
+      const k = db.keys[code];
+      if (!k) { await sendTelegram("Không tìm thấy key.", chatId); return; }
+      const devs = validDevicesForKey(code);
+      await sendTelegram(
+        "🔑 " + k.code + "\nLoại: " + k.label + "\nActive: " + (k.active?"ON":"OFF") +
+        "\nMax TB: " + (k.maxUses||"∞") + "\nĐang dùng: " + devs.length +
+        "\nNote: " + (k.note||"—") +
+        (devs.length ? "\nTB:\n- " + devs.map(d=>d.device).join("\n- ") : ""),
+        chatId
+      );
+      return;
+    }
+
+    if (cmd === "/new") {
+      const dur = parseDurationToken(args[0] || "30");
+      const note = args.slice(dur.preset || String(Number(args[0])) === String(args[0]) || ["perm","day","week","month","year"].includes(String(args[0]||"").toLowerCase()) ? 1 : 0).join(" ") || "";
+      // note: if first arg is duration, note from args[1..]
+      let note2 = "";
+      if (args.length) {
+        const first = String(args[0]).toLowerCase();
+        if (first === "perm" || first === "day" || first === "week" || first === "month" || first === "year" || Number(first) > 0) {
+          note2 = args.slice(1).join(" ");
+        } else {
+          note2 = args.join(" ");
+        }
+      }
+      const code = normalizeKey(genKey("ALM"));
+      const entry = {
+        code,
+        label: dur.label,
+        days: dur.permanent ? null : dur.days,
+        permanent: !!dur.permanent,
+        createdAt: Date.now(),
+        maxUses: 0,
+        usedCount: 0,
+        active: true,
+        note: note2
+      };
+      db.keys[code] = entry;
+      logHistory("key_create_tg", { code });
+      saveDB(db);
+      await sendTelegram("🔑 ĐÃ TẠO\n" + code + "\n" + entry.label + (note2 ? "\nNote: " + note2 : ""), chatId);
+      return;
+    }
+
+    if (cmd === "/bulk") {
+      const count = Math.min(Math.max(Number(args[0]) || 5, 1), 20);
+      const dur = parseDurationToken(args[1] || "30");
+      const created = [];
+      for (let i = 0; i < count; i++) {
+        let code = normalizeKey(genKey("ALM"));
+        let tries = 0;
+        while (db.keys[code] && tries < 15) { code = normalizeKey(genKey("ALM")); tries++; }
+        if (db.keys[code]) continue;
+        const entry = {
+          code, label: dur.label, days: dur.permanent ? null : dur.days, permanent: !!dur.permanent,
+          createdAt: Date.now(), maxUses: 1, usedCount: 0, active: true, note: "tg-bulk"
+        };
+        db.keys[code] = entry;
+        created.push(code);
+      }
+      logHistory("key_bulk_tg", { count: created.length });
+      saveDB(db);
+      await sendTelegram("🔑 BULK " + created.length + " key (" + dur.label + ")\n" + created.join("\n"), chatId);
+      return;
+    }
+
+    if (cmd === "/extend") {
+      const code = normalizeKey(args[0] || "");
+      const k = db.keys[code];
+      if (!k) { await sendTelegram("Không tìm thấy key.", chatId); return; }
+      const second = String(args[1] || "").toLowerCase();
+      if (second === "perm") {
+        k.permanent = true; k.days = null; k.label = "Vĩnh viễn";
+      } else {
+        const addDays = Number(args[1]) || 0;
+        if (addDays <= 0) { await sendTelegram("Dùng: /extend MÃ 30  hoặc /extend MÃ perm", chatId); return; }
+        if (!k.permanent) {
+          k.days = (Number(k.days) || 0) + addDays;
+          k.label = k.days + " ngày";
+          const addMs = addDays * 86400000;
+          for (const sess of Object.values(db.sessions)) {
+            if (normalizeKey(sess.key) === code && sess.expiresAt != null) {
+              sess.expiresAt = Number(sess.expiresAt) + addMs;
+              sess.label = k.label;
+            }
+          }
+        }
+      }
+      logHistory("key_extend_tg", { code });
+      saveDB(db);
+      await sendTelegram("⏰ Đã gia hạn " + code + " → " + k.label, chatId);
+      return;
+    }
+
+    if (cmd === "/off" || cmd === "/on") {
+      const code = normalizeKey(args[0] || "");
+      const k = db.keys[code];
+      if (!k) { await sendTelegram("Không tìm thấy key.", chatId); return; }
+      k.active = cmd === "/on";
+      logHistory("key_toggle_tg", { code, active: k.active });
+      saveDB(db);
+      await sendTelegram((k.active ? "✅ Bật " : "⛔ Tắt ") + code, chatId);
+      return;
+    }
+
+    if (cmd === "/del") {
+      const code = normalizeKey(args[0] || "");
+      if (!db.keys[code]) { await sendTelegram("Không tìm thấy key.", chatId); return; }
+      for (const id of Object.keys(db.sessions)) {
+        if (normalizeKey(db.sessions[id].key) === code) delete db.sessions[id];
+      }
+      delete db.keys[code];
+      logHistory("key_delete_tg", { code });
+      saveDB(db);
+      await sendTelegram("🗑️ Đã xóa " + code, chatId);
+      return;
+    }
+
+    if (cmd === "/kick") {
+      const code = normalizeKey(args[0] || "");
+      if (!db.keys[code]) { await sendTelegram("Không tìm thấy key.", chatId); return; }
+      let n = 0;
+      for (const id of Object.keys(db.sessions)) {
+        if (normalizeKey(db.sessions[id].key) === code) { delete db.sessions[id]; n++; }
+      }
+      logHistory("key_kick_tg", { code, n });
+      saveDB(db);
+      await sendTelegram("👢 Kick " + n + " TB của " + code, chatId);
+      return;
+    }
+
+    if (cmd === "/maint") {
+      if (!db.maintenance) db.maintenance = { enabled: false, reason: "", updatedAt: null };
+      const on = String(args[0] || "").toLowerCase();
+      if (on === "on") {
+        db.maintenance.enabled = true;
+        db.maintenance.reason = args.slice(1).join(" ") || db.maintenance.reason || "Đang bảo trì";
+      } else if (on === "off") {
+        db.maintenance.enabled = false;
+      } else {
+        await sendTelegram("Dùng: /maint on lý do  |  /maint off", chatId);
+        return;
+      }
+      db.maintenance.updatedAt = Date.now();
+      logHistory("maint_tg", { enabled: db.maintenance.enabled });
+      saveDB(db);
+      await sendTelegram((db.maintenance.enabled ? "🔧 Bảo trì ON\n" : "✅ Bảo trì OFF\n") + (db.maintenance.reason || ""), chatId);
+      return;
+    }
+
+    if (cmd === "/say") {
+      if (!db.announce) db.announce = { title: "THÔNG BÁO", text: "", enabled: false, updatedAt: null };
+      const body = args.join(" ");
+      const bits = body.split("|");
+      if (bits.length >= 2) {
+        db.announce.title = bits[0].trim().slice(0, 80) || "THÔNG BÁO";
+        db.announce.text = bits.slice(1).join("|").trim();
+      } else {
+        db.announce.title = "THÔNG BÁO";
+        db.announce.text = body;
+      }
+      db.announce.enabled = true;
+      db.announce.updatedAt = Date.now();
+      logHistory("announce_tg", {});
+      saveDB(db);
+      await sendTelegram("📢 Đã bật thông báo\n" + db.announce.title + "\n" + db.announce.text, chatId);
+      return;
+    }
+
+    if (cmd === "/sayoff") {
+      if (!db.announce) db.announce = { title: "THÔNG BÁO", text: "", enabled: false, updatedAt: null };
+      db.announce.enabled = false;
+      db.announce.updatedAt = Date.now();
+      saveDB(db);
+      await sendTelegram("📢 Đã tắt thông báo", chatId);
+      return;
+    }
+
+    await sendTelegram("Không hiểu lệnh. Gõ /help", chatId);
+  } catch (e) {
+    console.log("TG cmd error:", e);
+    await sendTelegram("Lỗi xử lý: " + (e.message || e), chatId);
   }
 }
 function sessionsForKey(keyCode) {
@@ -444,6 +732,23 @@ async function handle(req, res) {
       },
       settings: db.settings || { contactText: "Liên hệ admin TIEN HOC", contactUrl: "", supportNote: "" }
     });
+  }
+
+  // Telegram webhook — điều khiển admin qua bot
+  if (method === "POST" && p === "/api/telegram/webhook") {
+    const body = await readBody(req);
+    try {
+      const msg = body.message || body.edited_message;
+      if (msg && msg.chat && msg.text) {
+        const chatId = msg.chat.id;
+        const text = msg.text;
+        // async process but respond 200 quickly
+        handleTelegramCommand(chatId, text).catch((e) => console.log(e));
+      }
+    } catch (e) {
+      console.log("webhook parse", e.message);
+    }
+    return json(res, 200, { ok: true });
   }
 
   if (method === "POST" && p === "/api/activate") {
@@ -860,6 +1165,29 @@ async function handle(req, res) {
   if (method === "POST" && p === "/api/admin/telegram/test") {
     const ok = await sendTelegram("🤖 AIMLOCK TEST\nBot đã kết nối thành công.\nTime: " + new Date().toISOString());
     return json(res, ok ? 200 : 500, { ok: ok, error: ok ? undefined : "Gửi thất bại — kiểm tra token/chat id" });
+  }
+
+  if (method === "POST" && p === "/api/admin/telegram/setup-webhook") {
+    const token = getTgToken();
+    if (!token) return json(res, 400, { ok: false, error: "Chưa có TELEGRAM_BOT_TOKEN" });
+    const body = await readBody(req);
+    const host = (body.url || ("https://" + (req.headers.host || ""))).replace(/\/$/, "");
+    const hook = host + "/api/telegram/webhook";
+    const r = await fetch("https://api.telegram.org/bot" + token + "/setWebhook", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url: hook, drop_pending_updates: true })
+    });
+    const j = await r.json().catch(() => ({}));
+    return json(res, j.ok ? 200 : 500, { ok: !!j.ok, webhook: hook, telegram: j });
+  }
+
+  if (method === "GET" && p === "/api/admin/telegram/webhook-info") {
+    const token = getTgToken();
+    if (!token) return json(res, 400, { ok: false, error: "Chưa có token" });
+    const r = await fetch("https://api.telegram.org/bot" + token + "/getWebhookInfo");
+    const j = await r.json().catch(() => ({}));
+    return json(res, 200, { ok: true, info: j.result || j });
   }
 
   if (method === "GET" && p === "/api/admin/stats") {
