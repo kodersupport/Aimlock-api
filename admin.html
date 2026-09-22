@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AIMLOCK 10 — Admin</title>
+  <style>
+    :root {
+      --bg:#0a0305; --card:rgba(28,10,14,.94); --line:rgba(255,92,110,.22);
+      --accent:#ff3b52; --soft:#ff9aa5; --text:#fff4f5; --muted:#c4a8ad;
+      --ok:#96ffd5; --warn:#ffd78f;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;min-height:100vh;font-family:"Segoe UI",system-ui,sans-serif;background:radial-gradient(ellipse at top,rgba(255,42,66,.16),transparent 50%),#050102;color:var(--text);padding:14px 14px 48px}
+    h1{margin:0 0 2px;font-size:18px;letter-spacing:.12em}
+    .sub{color:var(--muted);font-size:12px;margin:0 0 12px}
+    .toolbar,.card{border:1px solid var(--line);border-radius:14px;background:var(--card);padding:12px;margin-bottom:12px}
+    .toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+    .tabs{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}
+    .tabs button{flex:1;min-width:70px;font-size:11px;padding:8px 6px}
+    .tabs button.active{background:linear-gradient(180deg,rgba(255,59,82,.55),rgba(148,12,31,.4))}
+    .hidden{display:none!important}
+    input,select,button,textarea{font:inherit;color:inherit;border-radius:10px;border:1px solid var(--line);background:rgba(255,255,255,.04);padding:10px 12px;outline:none}
+    input:focus,select:focus,textarea:focus{border-color:var(--accent)}
+    button{cursor:pointer;background:linear-gradient(180deg,rgba(255,59,82,.4),rgba(148,12,31,.3));border-color:rgba(255,138,151,.35);font-weight:700}
+    button.ghost{background:rgba(255,255,255,.04)}
+    button.danger{background:rgba(180,20,40,.5)}
+    button.ok{background:rgba(20,100,70,.45);border-color:rgba(100,220,160,.35)}
+    .stats{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}
+    .stat{flex:1;min-width:90px;padding:10px;border-radius:12px;border:1px solid var(--line);background:var(--card);text-align:center}
+    .stat b{display:block;font-size:18px;color:var(--soft)}
+    .stat span{font-size:9px;color:var(--muted);letter-spacing:.04em}
+    table{width:100%;border-collapse:collapse;font-size:12px}
+    th,td{text-align:left;padding:8px 4px;border-bottom:1px solid rgba(255,255,255,.06);vertical-align:top}
+    th{color:var(--muted);font-size:10px;text-transform:uppercase}
+    .badge{display:inline-block;padding:2px 7px;border-radius:999px;font-size:10px;font-weight:700}
+    .badge.ok{background:rgba(32,112,68,.35);color:var(--ok)}
+    .badge.off{background:rgba(120,40,50,.4);color:#ff8b98}
+    .badge.warn{background:rgba(140,100,20,.35);color:var(--warn)}
+    .form-row{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px}
+    .form-row input,.form-row select{flex:1;min-width:90px}
+    .msg{margin-top:8px;font-size:12px;color:var(--warn);min-height:1.1em}
+    .msg.ok{color:var(--ok)}
+    code{background:rgba(0,0,0,.35);padding:2px 6px;border-radius:6px;font-size:11px;word-break:break-all}
+    .devices{margin-top:6px;padding:8px;border-radius:10px;background:rgba(0,0,0,.25);font-size:11px}
+    .devices div{padding:4px 0;border-bottom:1px solid rgba(255,255,255,.05)}
+    .devices div:last-child{border-bottom:0}
+    h2{margin:0 0 10px;font-size:12px;letter-spacing:.12em;color:var(--soft);text-transform:uppercase}
+    .btn-row{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}
+    .btn-row button{padding:6px 8px;font-size:10px}
+    pre{margin:8px 0 0;padding:10px;border-radius:10px;background:rgba(0,0,0,.35);font-size:11px;white-space:pre-wrap;word-break:break-all;max-height:180px;overflow:auto}
+    .hist{font-size:11px;line-height:1.45;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.05)}
+    .hist b{color:var(--soft)}
+  </style>
+</head>
+<body>
+  <h1>AIMLOCK MODE 10</h1>
+  <p class="sub">Admin · Key · Thông báo · Bảo trì · Lịch sử</p>
+
+  <div class="toolbar">
+    <input id="tokenInput" type="password" placeholder="Admin Token" style="min-width:160px;flex:1" />
+    <button type="button" id="btnSaveToken">Lưu Token</button>
+    <button type="button" class="ghost" id="btnRefresh">Làm mới</button>
+    <button type="button" class="ghost" id="btnExport">Xuất CSV</button>
+  </div>
+
+  <div class="stats" id="stats"></div>
+
+  <div class="tabs" id="tabs">
+    <button type="button" class="active" data-tab="keys">Key</button>
+    <button type="button" data-tab="bulk">Hàng loạt</button>
+    <button type="button" data-tab="notice">Thông báo</button>
+    <button type="button" data-tab="maint">Bảo trì</button>
+    <button type="button" data-tab="contact">Liên hệ</button>
+    <button type="button" data-tab="history">Lịch sử</button>
+  </div>
+
+  <div class="card tab-panel" data-panel="keys">
+    <h2>Tạo Key mới</h2>
+    <div class="form-row">
+      <input id="newCode" placeholder="Mã key (trống = tự gen)" />
+      <select id="newPreset">
+        <option value="day">1 ngày</option>
+        <option value="week">1 tuần</option>
+        <option value="month" selected>1 tháng</option>
+        <option value="year">1 năm</option>
+        <option value="perm">Vĩnh viễn</option>
+        <option value="custom">Custom ngày</option>
+      </select>
+    </div>
+    <div class="form-row">
+      <input id="newDays" type="number" min="1" placeholder="Số ngày" style="display:none" />
+      <input id="newMaxUses" type="number" min="0" placeholder="Max thiết bị (0=∞)" value="0" />
+      <input id="newNote" placeholder="Ghi chú / tên khách" />
+    </div>
+    <button type="button" id="btnCreate">Tạo Key</button>
+    <div class="msg" id="createMsg"></div>
+    <hr style="border:none;border-top:1px solid var(--line);margin:14px 0" />
+    <h2>Tìm & danh sách</h2>
+    <div class="form-row">
+      <input id="searchQ" placeholder="Tìm mã key / ghi chú..." />
+      <button type="button" class="ghost" id="btnSearch">Tìm</button>
+    </div>
+    <div style="overflow-x:auto">
+      <table>
+        <thead><tr><th>Key / TB</th><th>Loại</th><th>TB</th><th></th></tr></thead>
+        <tbody id="keysBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card tab-panel hidden" data-panel="bulk">
+    <h2>Tạo key hàng loạt (tối đa 50)</h2>
+    <div class="form-row">
+      <input id="bulkCount" type="number" min="1" max="50" value="10" />
+      <input id="bulkPrefix" placeholder="Prefix" value="ALM" />
+      <select id="bulkPreset">
+        <option value="day">1 ngày</option>
+        <option value="week">1 tuần</option>
+        <option value="month" selected>1 tháng</option>
+        <option value="year">1 năm</option>
+        <option value="perm">Vĩnh viễn</option>
+      </select>
+    </div>
+    <div class="form-row">
+      <input id="bulkMaxUses" type="number" min="0" value="1" placeholder="Max TB" />
+      <input id="bulkNote" placeholder="Ghi chú chung" />
+    </div>
+    <button type="button" id="btnBulk">Tạo hàng loạt</button>
+    <button type="button" class="ghost" id="btnCopyBulk">Copy tất cả</button>
+    <div class="msg" id="bulkMsg"></div>
+    <pre id="bulkResult" style="display:none"></pre>
+  </div>
+
+  <div class="card tab-panel hidden" data-panel="notice">
+    <h2>Bảng thông báo (web user)</h2>
+    <div class="form-row"><input id="annTitle" placeholder="Tiêu đề" value="THÔNG BÁO" /></div>
+    <textarea id="annText" rows="5" placeholder="Nội dung..." style="width:100%;margin-top:8px"></textarea>
+    <div class="form-row" style="margin-top:10px;align-items:center">
+      <label style="display:flex;gap:8px;align-items:center;font-size:13px"><input type="checkbox" id="annEnabled" /> Bật thông báo</label>
+      <button type="button" id="btnSaveAnn">Lưu</button>
+    </div>
+    <div class="msg" id="annMsg"></div>
+  </div>
+
+  <div class="card tab-panel hidden" data-panel="maint" style="border-color:rgba(255,180,80,.35)">
+    <h2 style="color:var(--warn)">Bảo trì app user</h2>
+    <p style="margin:0 0 8px;font-size:12px;color:var(--muted)">Bật → user không vào app được</p>
+    <textarea id="mntReason" rows="3" placeholder="Lý do bảo trì..." style="width:100%"></textarea>
+    <div class="form-row" style="margin-top:10px;align-items:center">
+      <label style="display:flex;gap:8px;align-items:center;font-size:13px"><input type="checkbox" id="mntEnabled" /> Bật bảo trì</label>
+      <button type="button" class="danger" id="btnSaveMnt">Lưu bảo trì</button>
+    </div>
+    <div class="msg" id="mntMsg"></div>
+  </div>
+
+  <div class="card tab-panel hidden" data-panel="contact">
+    <h2>Liên hệ hiện trên user web</h2>
+    <div class="form-row"><input id="contactText" placeholder="Chữ nút (vd: Liên hệ Zalo admin)" /></div>
+    <div class="form-row"><input id="contactUrl" placeholder="Link Zalo/Telegram/Facebook..." /></div>
+    <textarea id="supportNote" rows="2" placeholder="Ghi chú hỗ trợ (FAQ ngắn)" style="width:100%"></textarea>
+    <hr style="border:none;border-top:1px solid var(--line);margin:14px 0" />
+    <h2>Telegram bot (báo cáo tự động)</h2>
+    <p style="margin:0 0 8px;font-size:12px;color:var(--muted);line-height:1.45">
+      Nên gắn Token trên Render (Environment). Chat ID có thể điền đây.<br/>
+      Bot sẽ báo: tạo key, kích hoạt, gia hạn, xóa, bảo trì, thông báo.
+    </p>
+    <div class="form-row"><input id="tgChatId" placeholder="Telegram Chat ID (vd: 123456789)" /></div>
+    <div class="form-row"><input id="tgToken" type="password" placeholder="Bot Token (tuỳ chọn nếu đã gắn trên Render)" /></div>
+    <button type="button" id="btnSaveContact" style="margin-top:8px">Lưu liên hệ + Telegram</button>
+    <button type="button" class="ghost" id="btnTestTg" style="margin-top:8px">Gửi tin test</button>
+    <div class="msg" id="contactMsg"></div>
+  </div>
+
+  <div class="card tab-panel hidden" data-panel="history">
+    <h2>Nhật ký gần đây</h2>
+    <div id="histBody"><p style="color:var(--muted);font-size:12px">Đang tải...</p></div>
+  </div>
+
+<script>
+const API = location.origin;
+const tokenInput = document.getElementById("tokenInput");
+let lastBulkCodes = [];
+let lastKeysCache = [];
+
+function getToken(){ return localStorage.getItem("alm10_admin_token") || tokenInput.value.trim(); }
+function headers(){ return { "Content-Type":"application/json", "X-Admin-Token": getToken() }; }
+tokenInput.value = localStorage.getItem("alm10_admin_token") || "";
+document.getElementById("btnSaveToken").onclick = () => {
+  localStorage.setItem("alm10_admin_token", tokenInput.value.trim());
+  refresh();
+};
+
+document.querySelectorAll("#tabs button").forEach(btn => {
+  btn.onclick = () => {
+    document.querySelectorAll("#tabs button").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    const t = btn.getAttribute("data-tab");
+    document.querySelectorAll(".tab-panel").forEach(p => {
+      p.classList.toggle("hidden", p.getAttribute("data-panel") !== t);
+    });
+    if (t === "history") loadHistory();
+    if (t === "contact") loadSettings();
+  };
+});
+
+document.getElementById("newPreset").onchange = () => {
+  document.getElementById("newDays").style.display =
+    document.getElementById("newPreset").value === "custom" ? "block" : "none";
+};
+
+async function api(method, path, body) {
+  const opt = { method, headers: headers() };
+  if (body) opt.body = JSON.stringify(body);
+  const r = await fetch(API + path, opt);
+  return r.json();
+}
+
+function copyText(t) {
+  if (navigator.clipboard && navigator.clipboard.writeText) return navigator.clipboard.writeText(t);
+  const a = document.createElement("textarea"); a.value = t; document.body.appendChild(a); a.select();
+  document.execCommand("copy"); document.body.removeChild(a); return Promise.resolve();
+}
+
+function renderKeys(keys) {
+  lastKeysCache = keys || [];
+  document.getElementById("keysBody").innerHTML = (keys || []).map(k => {
+    const devicesHtml = (k.devices && k.devices.length)
+      ? `<div class="devices">${k.devices.map(d =>
+          `<div><b>${d.device||"Device"}</b> · ${d.remaining||""}
+          <button class="danger" style="padding:3px 6px;font-size:10px;margin-left:4px" onclick="kickDevice('${d.deviceId}')">Kick</button></div>`
+        ).join("")}</div>`
+      : `<div class="devices" style="color:var(--muted)">Chưa có TB</div>`;
+    return `<tr>
+      <td><code>${k.code}</code>
+        <button class="ghost" style="padding:2px 6px;font-size:10px" onclick="copyKey('${k.code}')">Copy</button>
+        <br/><span style="color:var(--muted);font-size:10px">${k.note||""}</span>${devicesHtml}</td>
+      <td>${k.label}<br/><span class="badge ${k.active?"ok":"off"}">${k.active?"ON":"OFF"}</span>
+        ${k.maxUses?`<br/><span style="font-size:10px;color:var(--muted)">Max ${k.maxUses} TB</span>`:""}</td>
+      <td><b style="color:var(--soft)">${k.deviceCount||0}</b>${k.maxUses?"/"+k.maxUses:""}</td>
+      <td><div class="btn-row">
+        <button class="ghost" onclick="toggleKey('${k.code}',${!k.active})">${k.active?"Tắt":"Bật"}</button>
+        <button class="ok" onclick="extendKey('${k.code}')">Gia hạn</button>
+        <button class="ghost" onclick="kickAll('${k.code}')">Kick all</button>
+        <button class="danger" onclick="delKey('${k.code}')">Xóa</button>
+      </div></td></tr>`;
+  }).join("") || "<tr><td colspan='4'>Không có key</td></tr>";
+}
+
+async function refresh() {
+  try {
+    const q = document.getElementById("searchQ").value.trim();
+    const path = q ? "/api/admin/keys?q="+encodeURIComponent(q) : "/api/admin/keys";
+    const [st, keys] = await Promise.all([api("GET","/api/admin/stats"), api("GET", path)]);
+    if (!st.ok) {
+      document.getElementById("stats").innerHTML = `<div class="stat"><b>!</b><span>${st.error||"Sai token"}</span></div>`;
+      return;
+    }
+    const s = st.stats;
+    document.getElementById("stats").innerHTML = `
+      <div class="stat"><b>${s.totalKeys}</b><span>TỔNG KEY</span></div>
+      <div class="stat"><b>${s.activeKeys}</b><span>ACTIVE</span></div>
+      <div class="stat"><b>${s.validSessions||0}</b><span>ONLINE</span></div>
+      <div class="stat"><b>${s.expiringSoon||0}</b><span>SẮP HẾT HẠN</span></div>
+      <div class="stat"><b>${s.permanentKeys||0}</b><span>VĨNH VIỄN</span></div>
+      <div class="stat"><b>${s.timedKeys||0}</b><span>CÓ HẠN</span></div>`;
+    renderKeys(keys.keys||[]);
+    loadAnnounce();
+  } catch(e) {
+    document.getElementById("stats").innerHTML = `<div class="stat"><b>!</b><span>${e.message}</span></div>`;
+  }
+}
+
+document.getElementById("btnCreate").onclick = async () => {
+  const msg = document.getElementById("createMsg");
+  msg.className = "msg"; msg.textContent = "";
+  const body = {
+    code: document.getElementById("newCode").value.trim()||undefined,
+    maxUses: Number(document.getElementById("newMaxUses").value)||0,
+    note: document.getElementById("newNote").value.trim()
+  };
+  const preset = document.getElementById("newPreset").value;
+  if (preset==="custom"){ body.days=Number(document.getElementById("newDays").value)||1; body.permanent=false; body.label=body.days+" ngày"; }
+  else body.preset = preset;
+  const r = await api("POST","/api/admin/keys", body);
+  if (r.ok){ msg.className="msg ok"; msg.textContent="Đã tạo: "+r.key.code; document.getElementById("newCode").value=""; copyText(r.key.code); refresh(); }
+  else msg.textContent = r.error||"Lỗi";
+};
+
+document.getElementById("btnBulk").onclick = async () => {
+  const msg = document.getElementById("bulkMsg");
+  const pre = document.getElementById("bulkResult");
+  msg.className="msg"; msg.textContent="";
+  const r = await api("POST","/api/admin/keys/bulk",{
+    count:Number(document.getElementById("bulkCount").value)||10,
+    prefix:document.getElementById("bulkPrefix").value.trim()||"ALM",
+    preset:document.getElementById("bulkPreset").value,
+    maxUses:Number(document.getElementById("bulkMaxUses").value)||0,
+    note:document.getElementById("bulkNote").value.trim()
+  });
+  if (r.ok){
+    lastBulkCodes=(r.keys||[]).map(k=>k.code);
+    msg.className="msg ok"; msg.textContent="Đã tạo "+r.count+" key";
+    pre.style.display="block"; pre.textContent=lastBulkCodes.join("\n");
+    refresh();
+  } else msg.textContent=r.error||"Lỗi";
+};
+document.getElementById("btnCopyBulk").onclick = () => {
+  if (!lastBulkCodes.length) return alert("Chưa có key hàng loạt");
+  copyText(lastBulkCodes.join("\n")).then(()=>alert("Đã copy "+lastBulkCodes.length+" key"));
+};
+
+async function loadAnnounce(){
+  try{
+    const r=await api("GET","/api/admin/announce");
+    if(r.ok&&r.announce){
+      document.getElementById("annTitle").value=r.announce.title||"THÔNG BÁO";
+      document.getElementById("annText").value=r.announce.text||"";
+      document.getElementById("annEnabled").checked=!!r.announce.enabled;
+    }
+    if(r.ok&&r.maintenance){
+      document.getElementById("mntReason").value=r.maintenance.reason||"";
+      document.getElementById("mntEnabled").checked=!!r.maintenance.enabled;
+    }
+  }catch(e){}
+}
+document.getElementById("btnSaveAnn").onclick=async()=>{
+  const msg=document.getElementById("annMsg"); msg.className="msg";
+  const r=await api("PUT","/api/admin/announce",{title:document.getElementById("annTitle").value,text:document.getElementById("annText").value,enabled:document.getElementById("annEnabled").checked});
+  msg.className=r.ok?"msg ok":"msg"; msg.textContent=r.ok?"Đã lưu thông báo":(r.error||"Lỗi");
+};
+document.getElementById("btnSaveMnt").onclick=async()=>{
+  const msg=document.getElementById("mntMsg"); msg.className="msg";
+  const r=await api("PUT","/api/admin/maintenance",{reason:document.getElementById("mntReason").value,enabled:document.getElementById("mntEnabled").checked});
+  msg.className=r.ok?"msg ok":"msg"; msg.textContent=r.ok?(r.maintenance.enabled?"Đã BẬT bảo trì":"Đã TẮT bảo trì"):(r.error||"Lỗi");
+};
+
+async function loadSettings(){
+  try{
+    const r=await api("GET","/api/admin/settings");
+    if(r.ok&&r.settings){
+      document.getElementById("contactText").value=r.settings.contactText||"";
+      document.getElementById("contactUrl").value=r.settings.contactUrl||"";
+      document.getElementById("supportNote").value=r.settings.supportNote||"";
+      var c=document.getElementById("tgChatId"); if(c) c.value=r.settings.telegramChatId||"";
+      var t=document.getElementById("tgToken"); if(t) t.value=r.settings.telegramBotToken||"";
+    }
+  }catch(e){}
+}
+document.getElementById("btnSaveContact").onclick=async()=>{
+  const msg=document.getElementById("contactMsg"); msg.className="msg";
+  const body={
+    contactText:document.getElementById("contactText").value,
+    contactUrl:document.getElementById("contactUrl").value,
+    supportNote:document.getElementById("supportNote").value,
+    telegramChatId:document.getElementById("tgChatId").value.trim()
+  };
+  const tok=document.getElementById("tgToken").value.trim();
+  if(tok) body.telegramBotToken=tok;
+  const r=await api("PUT","/api/admin/settings",body);
+  msg.className=r.ok?"msg ok":"msg"; msg.textContent=r.ok?"Đã lưu liên hệ + Telegram":(r.error||"Lỗi");
+};
+document.getElementById("btnTestTg").onclick=async()=>{
+  const msg=document.getElementById("contactMsg"); msg.className="msg";
+  const r=await api("POST","/api/admin/telegram/test");
+  msg.className=r.ok?"msg ok":"msg"; msg.textContent=r.ok?"Đã gửi tin test — kiểm tra Telegram":(r.error||"Lỗi");
+};
+
+async function loadHistory(){
+  const el=document.getElementById("histBody");
+  try{
+    const r=await api("GET","/api/admin/history");
+    if(!r.ok){ el.innerHTML="<p>Lỗi / sai token</p>"; return; }
+    el.innerHTML=(r.history||[]).map(h=>
+      `<div class="hist"><b>${h.action}</b> · ${h.atText||""}<br/><span style="color:var(--muted)">${JSON.stringify(h.detail||{})}</span></div>`
+    ).join("") || "<p style='color:var(--muted)'>Chưa có lịch sử</p>";
+  }catch(e){ el.innerHTML="<p>"+e.message+"</p>"; }
+}
+
+document.getElementById("btnExport").onclick=()=>{
+  if(!lastKeysCache.length) return alert("Chưa có dữ liệu key");
+  const rows=[["code","label","days","permanent","maxUses","usedCount","active","note","deviceCount"]];
+  lastKeysCache.forEach(k=>rows.push([k.code,k.label,k.days,k.permanent,k.maxUses,k.usedCount,k.active,k.note,k.deviceCount]));
+  const csv=rows.map(r=>r.map(x=>`"${String(x??"").replace(/"/g,'""')}"`).join(",")).join("\n");
+  const blob=new Blob([csv],{type:"text/csv;charset=utf-8"});
+  const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download="aimlock-keys.csv"; a.click();
+};
+
+document.getElementById("btnSearch").onclick=refresh;
+document.getElementById("searchQ").addEventListener("keydown",e=>{ if(e.key==="Enter") refresh(); });
+document.getElementById("btnRefresh").onclick=()=>{ document.getElementById("searchQ").value=""; refresh(); };
+
+window.copyKey=code=>copyText(code).then(()=>alert("Đã copy: "+code));
+window.toggleKey=async(code,active)=>{ await api("PUT","/api/admin/keys/"+code,{active}); refresh(); };
+window.delKey=async(code)=>{ if(!confirm("Xóa key "+code+"?"))return; await api("DELETE","/api/admin/keys/"+code); refresh(); };
+window.kickDevice=async(id)=>{ if(!confirm("Kick thiết bị?"))return; await api("DELETE","/api/admin/devices/"+encodeURIComponent(id)); refresh(); };
+window.kickAll=async(code)=>{ if(!confirm("Kick ALL thiết bị của "+code+"?"))return; const r=await api("DELETE","/api/admin/keys/"+code+"/devices"); alert(r.ok?"Đã kick "+(r.kicked||0)+" TB":r.error||"Lỗi"); refresh(); };
+window.extendKey=async(code)=>{
+  const raw=prompt("Gia hạn thêm bao nhiêu ngày? (hoặc gõ PERM = vĩnh viễn)","30");
+  if(raw==null)return;
+  const body=String(raw).trim().toUpperCase()==="PERM"?{permanent:true}:{days:Number(raw)||0};
+  const r=await api("POST","/api/admin/keys/"+code+"/extend",body);
+  alert(r.ok?"Đã gia hạn "+code:r.error||"Lỗi"); refresh();
+};
+
+refresh();
+</script>
+</body>
+</html>
